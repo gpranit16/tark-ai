@@ -1,0 +1,207 @@
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+@layer base {
+  :root {
+    color-scheme: dark;
+    --accent: #C9A86A;
+    --accent-hi: #E1C27A;
+    --accent-lo: #8E7548;
+    --bg: #000000;
+    --bg-secondary: #050505;
+    --surface: #0B0B0C;
+    --surface2: #101011;
+    --text-primary: #F2F0EB;
+    --text-secondary: #A3A09A;
+    --text-muted: #77736D;
+    --border: rgba(255, 255, 255, 0.05);
+  }
+
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "kern" 1, "liga" 1, "calt" 1;
+  }
+
+  body {
+    @apply bg-background text-[#F2F0EB] antialiased selection:bg-accent/20 selection:text-accent;
+    font-family: 'Satoshi', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-weight: 400;
+    letter-spacing: -0.012em;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    color-scheme: dark;
+    background-color: #000000;
+  }
+
+  select {
+    color-scheme: dark;
+    background-color: #141415;
+    color: #F2F0EB;
+  }
+
+  select option {
+    background-color: #141415 !important;
+    color: #F2F0EB !important;
+  }
+
+  select option:checked {
+    background-color: #1C1C20 !important;
+    color: #C9A86A !important;
+  }
+
+  /* Refined champagne focus ring — only on keyboard navigation */
+  *:focus-visible {
+    outline: 1.5px solid rgba(201, 168, 106, 0.4);
+    outline-offset: 2px;
+  }
+}
+
+/* ─── Premium Scrollbar ─────────────────────────────── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(214, 181, 106, 0.14);
+  border-radius: 99px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(214, 181, 106, 0.28);
+}
+
+/* ─── Typography helpers ─────────────────────────────── */
+.font-serif-italic {
+  font-family: 'Instrument Serif', Georgia, serif;
+  font-style: italic;
+  position: relative;
+  top: 1px;
+}
+
+/* ─── Micro-animation utilities ──────────────────────── */
+@keyframes fadeSlideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fade-up {
+  animation: fadeSlideUp 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes subtlePulse {
+  0%, 100% { opacity: 0.45; transform: scale(1); }
+  50%       { opacity: 0.85; transform: scale(1.25); }
+}
+.animate-subtle-pulse {
+  animation: subtlePulse 3.2s ease-in-out infinite;
+}
+
+@keyframes orbitSlow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+.animate-orbit-slow {
+  animation: orbitSlow 40s linear infinite;
+}
+
+@keyframes scanLine {
+  0% { transform: translateY(-100%); opacity: 0; }
+  50% { opacity: 0.6; }
+  100% { transform: translateY(200%); opacity: 0; }
+}
+
+@keyframes terminalBlink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+@keyframes sparkShimmer {
+  0%, 100% { transform: scale(1) rotate(0deg); opacity: 0.8; }
+  50% { transform: scale(1.2) rotate(15deg); opacity: 1; }
+}
+
+@keyframes dataNodeDrift {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(2px, -2px); }
+}
+
+/* ─── Hero ambient radial atmosphere ────────────────── */
+.hero-ambient {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 55% 42% at 36% 48%, rgba(201, 168, 106, 0.035) 0%, transparent 70%),
+    radial-gradient(ellipse 35% 55% at 82% 42%, rgba(201, 168, 106, 0.025) 0%, transparent 70%);
+  z-index: 0;
+}
+
+/* ─── Signature Composer Focus State ───────────────── */
+.composer-wrap {
+  border-color: rgba(255, 255, 255, 0.06);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.35);
+  transition: border-color 200ms ease, box-shadow 200ms ease, background-color 200ms ease;
+}
+.composer-wrap:focus-within {
+  border-color: rgba(201, 168, 106, 0.25);
+  box-shadow:
+    0 0 0 1px rgba(201, 168, 106, 0.08) inset,
+    0 8px 36px rgba(0, 0, 0, 0.55),
+    0 0 24px rgba(201, 168, 106, 0.05);
+  background-color: #0E0E10;
+}
+
+/* ─── Capability Action Card ────────────────────────── */
+.action-card {
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+              border-color 160ms ease,
+              box-shadow 180ms ease,
+              background-color 160ms ease;
+}
+.action-card:hover {
+  transform: translateY(-2.5px);
+}
+
+/* Card Micro-Interactions on hover/focus */
+.action-card:hover .micro-scan {
+  animation: scanLine 1.4s ease-in-out infinite;
+}
+.action-card:hover .micro-terminal {
+  animation: terminalBlink 0.8s ease-in-out infinite;
+}
+.action-card:hover .micro-spark {
+  animation: sparkShimmer 1.2s ease-in-out infinite;
+}
+.action-card:hover .micro-orbit {
+  animation: orbitSlow 6s linear infinite;
+}
+.action-card:hover .micro-node {
+  animation: dataNodeDrift 1.5s ease-in-out infinite;
+}
+.action-card:hover .micro-glow {
+  animation: subtlePulse 1.8s ease-in-out infinite;
+}
+
+/* ─── Reduced motion respect ────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .animate-fade-up,
+  .animate-subtle-pulse,
+  .animate-orbit-slow,
+  .action-card,
+  .action-card:hover,
+  .micro-scan,
+  .micro-terminal,
+  .micro-spark,
+  .micro-orbit,
+  .micro-node,
+  .micro-glow {
+    animation: none !important;
+    transition: none !important;
+    transform: none !important;
+  }
+}

@@ -1,0 +1,41 @@
+"""Built-in tools for TARK AI."""
+from app.tools.builtins.calculator import CalculatorTool
+from app.tools.builtins.conversation_search import ConversationSearchTool
+from app.tools.builtins.crypto import CryptoPriceTool
+from app.tools.builtins.currency import CurrencyConversionTool
+from app.tools.builtins.finance import StockPriceTool
+from app.tools.builtins.knowledge_search import KnowledgeSearchTool
+from app.tools.builtins.memory_search import MemorySearchTool
+from app.tools.builtins.news import NewsSearchTool
+from app.tools.builtins.url_reader import URLReaderTool
+from app.tools.builtins.weather import WeatherTool
+from app.tools.builtins.web_search import WebSearchTool
+
+BUILTIN_TOOLS = [
+    CalculatorTool,
+    WebSearchTool,
+    URLReaderTool,
+    WeatherTool,
+    CurrencyConversionTool,
+    NewsSearchTool,
+    StockPriceTool,
+    CryptoPriceTool,
+    KnowledgeSearchTool,
+    MemorySearchTool,
+    ConversationSearchTool,
+]
+
+__all__ = [
+    "BUILTIN_TOOLS",
+    "CalculatorTool",
+    "WebSearchTool",
+    "URLReaderTool",
+    "WeatherTool",
+    "CurrencyConversionTool",
+    "NewsSearchTool",
+    "StockPriceTool",
+    "CryptoPriceTool",
+    "KnowledgeSearchTool",
+    "MemorySearchTool",
+    "ConversationSearchTool",
+]
