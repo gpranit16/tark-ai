@@ -620,22 +620,57 @@ export default function ChatRoute() {
     });
   }, [threadId, isStreaming, provider, model, mode, navigate, queryClient, streamChat, uploadedFiles, isTemporaryChat, webSearchEnabled]);
 
-  const renderContent = (content) => (
-    <div className="prose prose-invert max-w-none text-sm leading-relaxed
-      prose-p:my-1 prose-headings:text-gray-100 prose-strong:text-gray-100
-      prose-a:text-accent">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        rehypePlugins={[rehypeHighlight]}
-        components={{
-          code: CodeBlock,
-          pre: ({ children }) => <>{children}</>,
-        }}
-      >
-        {content || ''}
-      </ReactMarkdown>
-    </div>
-  );
+  const renderContent = (content) => {
+    if (!content) return null;
+    
+    // Check for <think>...</think> or unclosed <think>... (during streaming)
+    let thinkingText = null;
+    let mainText = content;
+
+    const thinkMatch = content.match(/<think>([\s\S]*?)(?:<\/think>|$)/i);
+    if (thinkMatch) {
+      thinkingText = thinkMatch[1].trim();
+      mainText = content.replace(/<think>[\s\S]*?(?:<\/think>|$)/i, '').trim();
+    }
+
+    return (
+      <div className="space-y-2">
+        {thinkingText && (
+          <details className="group rounded-xl border border-accent/20 bg-[#121214]/80 p-2.5 text-xs text-muted-foreground transition-all">
+            <summary className="cursor-pointer font-medium text-accent/90 select-none flex items-center gap-1.5 list-none hover:text-accent">
+              <span className="text-[10px] text-accent/60 group-open:rotate-90 transition-transform">▶</span>
+              <span className="flex items-center gap-1 font-mono text-[11px] uppercase tracking-wider">
+                🧠 Thought Process
+              </span>
+            </summary>
+            <div className="mt-2 pl-3 border-l border-accent/20 text-[#A3A09A] leading-relaxed font-sans whitespace-pre-wrap">
+              {thinkingText}
+            </div>
+          </details>
+        )}
+        {mainText ? (
+          <div className="prose prose-invert max-w-none text-sm leading-relaxed
+            prose-p:my-1 prose-headings:text-gray-100 prose-strong:text-gray-100
+            prose-a:text-accent">
+            <ReactMarkdown
+              remarkPlugins={[remarkGfm]}
+              rehypePlugins={[rehypeHighlight]}
+              components={{
+                code: CodeBlock,
+                pre: ({ children }) => <>{children}</>,
+              }}
+            >
+              {mainText}
+            </ReactMarkdown>
+          </div>
+        ) : thinkingText && !mainText ? (
+          <div className="text-xs text-muted-foreground italic animate-pulse">
+            Thinking…
+          </div>
+        ) : null}
+      </div>
+    );
+  };
 
   const isStreamingActive = streamingDisplay !== null;
   const isNewChat = !threadId && localMessages.length === 0 && !isStreamingActive;

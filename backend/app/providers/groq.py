@@ -44,29 +44,15 @@ class GroqProvider(AIProvider):
             kwargs: dict[str, object] = {}
 
             # Token budget resolution:
-            # 1. Explicit max_tokens parameter takes highest precedence (clamped to Groq provider model bounds)
-            # 2. If mode is RAG, use configured rag_max_output_tokens (default 500)
-            # 3. If mode is FAST, use fast mode bounded limit (150)
-            # 4. For normal chat / coding / reasoning, use model defaults
+            # 1. Explicit max_tokens parameter takes highest precedence
+            # 2. If mode is FAST, use fast mode bounded limit (250)
+            # 3. For normal chat / coding / reasoning / web search, allow full 4096 tokens
             if max_tokens is not None:
-                if "qwen3.6" in model.lower():
-                    kwargs["max_tokens"] = min(max_tokens, 450)
-                elif "qwen" in model.lower():
-                    kwargs["max_tokens"] = min(max_tokens, 2000)
-                elif "gpt-oss" in model.lower():
-                    kwargs["max_tokens"] = min(max_tokens, 3000)
-                else:
-                    kwargs["max_tokens"] = min(max_tokens, 3000)
-            elif mode == ConversationMode.RAG:
-                kwargs["max_tokens"] = settings.rag_max_output_tokens
+                kwargs["max_tokens"] = min(max_tokens, 4096)
             elif mode == ConversationMode.FAST:
-                kwargs["max_tokens"] = 150
-            elif "qwen3.6" in model.lower():
-                kwargs["max_tokens"] = 450
-            elif "qwen" in model.lower():
-                kwargs["max_tokens"] = 900
-            elif "gpt-oss" in model.lower():
-                kwargs["max_tokens"] = 1200
+                kwargs["max_tokens"] = 250
+            else:
+                kwargs["max_tokens"] = 4096
 
             client = AsyncGroq(api_key=self.api_key, timeout=self.timeout, max_retries=0)
             msg_payload = [
