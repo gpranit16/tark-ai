@@ -305,7 +305,7 @@ export default function ChatRoute() {
     if (autoScrollSetting) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [localMessages, streamingDisplay, activeToolEvents, autoScrollSetting]);
+  }, [localMessages.length, isStreamingActive, autoScrollSetting]);
 
   const handleInput = (e) => {
     setInputMessage(e.target.value);
@@ -804,7 +804,7 @@ export default function ChatRoute() {
       )}
 
       {/* Message area */}
-      <div className="flex-1 overflow-y-auto px-4 py-4 relative z-10 flex flex-col justify-center">
+      <div className={clsx("flex-1 overflow-y-auto px-4 py-4 relative z-10 flex flex-col scrollbar-thin", isNewChat ? "justify-center" : "justify-start")}>
         {isNewChat ? (
           <div className="relative flex items-center justify-center min-h-[calc(100vh-14rem)] max-w-7xl mx-auto w-full px-4 py-4 gap-0 lg:gap-8">
             {/* Hero ambient atmospheric glow */}
