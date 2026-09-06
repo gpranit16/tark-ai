@@ -90,6 +90,17 @@ class GroqProvider(AIProvider):
                     finish_reason = None
                     if choice is not None:
                         delta = choice.delta.content or ""
+                        # Handle native Groq tool_calls in stream delta if sent by model
+                        if hasattr(choice.delta, "tool_calls") and choice.delta.tool_calls:
+                            for tc in choice.delta.tool_calls:
+                                fn = getattr(tc, "function", None)
+                                if fn:
+                                    fn_name = getattr(fn, "name", "")
+                                    fn_args = getattr(fn, "arguments", "")
+                                    if fn_name:
+                                        delta += f'<tool_call>{{"name": "{fn_name}", "arguments": {fn_args or "{}"}}}</tool_call>'
+                                    elif fn_args:
+                                        delta += fn_args
                         finish_reason = choice.finish_reason
                     usage = getattr(chunk, "usage", None)
                     yield ProviderStreamEvent(
@@ -110,6 +121,12 @@ class GroqProvider(AIProvider):
             return error
         status_code = getattr(error, "status_code", None)
         name = error.__class__.__name__.lower()
+        raw_message = str(error).strip() or "Groq request failed"
+        lower_msg = raw_message.lower()
+
+        # Check for tool mismatch or model-specific tool errors
+        is_tool_error = "tool choice" in lower_msg or "called a tool" in lower_msg
+
         if "authentication" in name or status_code in {401, 403}:
             code = ProviderErrorCode.AUTH_ERROR
         elif "rate" in name or status_code == 429:
@@ -134,7 +151,6 @@ class GroqProvider(AIProvider):
                 except (ValueError, TypeError):
                     pass
 
-        raw_message = str(error).strip() or "Groq request failed"
         if retry_after is None:
             m = re.search(r"try again in ([\d\.]+)\s*(s|ms)", raw_message, re.IGNORECASE)
             if m:
@@ -146,7 +162,8 @@ class GroqProvider(AIProvider):
             f"Groq provider request failed: {error.__class__.__name__}"
             f" (status={status_code}) {sanitized_message}"
         )
-        return ProviderError(code, safe_message, provider=self.name, retryable=code in _RETRYABLE, retry_after=retry_after)
+        is_retryable = (code in _RETRYABLE) or is_tool_error or (status_code is None)
+        return ProviderError(code, safe_message, provider=self.name, retryable=is_retryable, retry_after=retry_after)
 
 
 def _usage_from_object(usage: object | None) -> UsageMetadata:
@@ -160,3 +177,4 @@ def _usage_from_object(usage: object | None) -> UsageMetadata:
 
 
 _RETRYABLE = {ProviderErrorCode.RATE_LIMIT, ProviderErrorCode.TIMEOUT, ProviderErrorCode.UNAVAILABLE}
+
