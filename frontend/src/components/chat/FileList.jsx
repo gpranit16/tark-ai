@@ -170,14 +170,14 @@ const FileItem = ({ file, onRemove }) => {
 
       {/* Status Indicators */}
       {(docStatus === 'processing' || docStatus === 'pending') && (
-        <span className="flex items-center gap-1 text-[9px] text-amber-400 bg-amber-400/10 px-1.5 py-0.5 rounded shrink-0">
-          <Loader2 size={9} className="animate-spin" />
+        <span className="flex items-center gap-1 text-[10px] text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full shrink-0 font-medium" title="Document is being parsed and indexed for RAG">
+          <Loader2 size={10} className="animate-spin" /> Processing
         </span>
       )}
 
       {docStatus === 'completed' && (
-        <span className="flex items-center gap-1 text-[9px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded shrink-0">
-          <CheckCircle2 size={10} />
+        <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded-full shrink-0 font-medium" title="Document is ready for RAG">
+          <CheckCircle2 size={10} /> Ready
         </span>
       )}
 
