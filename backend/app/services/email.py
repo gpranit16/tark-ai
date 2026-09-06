@@ -75,9 +75,10 @@ class EmailService:
         }
 
         try:
-            # Resend python SDK non-blocking async thread execution
+            # Resend python SDK non-blocking async thread execution with 5s timeout
             import asyncio
-            response = await asyncio.to_thread(resend.Emails.send, params)
+            async with asyncio.timeout(5.0):
+                response = await asyncio.to_thread(resend.Emails.send, params)
             
             # Log success safely (log only recipient domains, never full email/token)
             domains = [r.split("@")[-1] for r in recipient_list if "@" in r]

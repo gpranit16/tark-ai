@@ -62,50 +62,61 @@ async def signup(
 ) -> TokenResponse:
     normalized_email = payload.email.strip().lower()
 
-    # Check for existing account with same email
-    stmt = select(User).where(User.email == normalized_email)
-    result = await session.execute(stmt)
-    existing = result.scalar_one_or_none()
-    if existing is not None:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="An account with this email address already exists.",
+    try:
+        # Check for existing account with same email
+        stmt = select(User).where(User.email == normalized_email)
+        result = await session.execute(stmt)
+        existing = result.scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="An account with this email address already exists.",
+            )
+
+        # Create user with bcrypt password hash
+        hashed = hash_password(payload.password)
+        user = User(
+            email=normalized_email,
+            password_hash=hashed,
+            name=payload.name.strip(),
+            is_active=True,
+            is_verified=False,
         )
+        session.add(user)
+        await session.flush()
 
-    # Create user with bcrypt password hash
-    hashed = hash_password(payload.password)
-    user = User(
-        email=normalized_email,
-        password_hash=hashed,
-        name=payload.name.strip(),
-        is_active=True,
-        is_verified=False,
-    )
-    session.add(user)
-    await session.flush()
+        # Create default user settings with user display_name
+        settings_obj = UserSettings(
+            user_id=user.id,
+            display_name=payload.name.strip() or "Developer",
+        )
+        session.add(settings_obj)
 
-    # Create default user settings with user display_name
-    settings_obj = UserSettings(
-        user_id=user.id,
-        display_name=payload.name.strip() or "Developer",
-    )
-    session.add(settings_obj)
-
-    # Generate and store email verification token
-    raw_token = generate_auth_token(32)
-    token_hash_str = hash_token(raw_token)
-    expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.email_verification_token_expire_hours)
-    
-    token_record = AuthToken(
-        user_id=user.id,
-        token_hash=token_hash_str,
-        token_type="email_verification",
-        expires_at=expires_at,
-        is_used=False,
-    )
-    session.add(token_record)
-    await session.commit()
-    await session.refresh(user, attribute_names=["settings"])
+        # Generate and store email verification token
+        raw_token = generate_auth_token(32)
+        token_hash_str = hash_token(raw_token)
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.email_verification_token_expire_hours)
+        
+        token_record = AuthToken(
+            user_id=user.id,
+            token_hash=token_hash_str,
+            token_type="email_verification",
+            expires_at=expires_at,
+            is_used=False,
+        )
+        session.add(token_record)
+        await session.commit()
+        await session.refresh(user, attribute_names=["settings"])
+    except HTTPException:
+        await session.rollback()
+        raise
+    except Exception as db_err:
+        await session.rollback()
+        logger.error("[AUTH] signup_db_error error=%s", type(db_err).__name__)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service temporarily unavailable. Please try again.",
+        ) from db_err
 
     # Dispatch verification email via Resend in background (non-blocking)
     verification_url = f"{settings.frontend_url}/verify-email?token={raw_token}"

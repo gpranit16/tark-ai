@@ -14,21 +14,34 @@ export async function fetchApi(endpoint, options = {}) {
     headers.delete('Content-Type');
   }
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 15000);
 
-  if (!response.ok) {
-    let errorDetail = 'Unknown API Error';
-    try {
-      const errorData = await response.json();
-      errorDetail = errorData.detail || errorData.message || JSON.stringify(errorData);
-    } catch (e) {
-      errorDetail = response.statusText;
+  try {
+    const response = await fetch(url, {
+      ...options,
+      headers,
+      signal: options.signal || controller.signal,
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      let errorDetail = 'Unknown API Error';
+      try {
+        const errorData = await response.json();
+        errorDetail = errorData.detail || errorData.message || JSON.stringify(errorData);
+      } catch (e) {
+        errorDetail = response.statusText;
+      }
+      throw new Error(`API Error (${response.status}): ${errorDetail}`);
     }
-    throw new Error(`API Error (${response.status}): ${errorDetail}`);
-  }
 
-  return response.json();
+    return response.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err.name === 'AbortError' || err.message?.includes('aborted')) {
+      throw new Error('API Error (408): Request timed out. Please check your connection or try again.');
+    }
+    throw err;
+  }
 }

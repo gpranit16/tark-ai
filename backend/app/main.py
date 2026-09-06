@@ -29,8 +29,8 @@ async def _ensure_dev_user() -> None:
 
 
 async def _warmup_ml_models() -> None:
-    """Pre-warm embedding and reranker model singletons in background thread pool."""
-    if settings.app_env == "test":
+    """Pre-warm embedding and reranker model singletons in background thread pool (dev only)."""
+    if settings.app_env != "development":
         return
     import asyncio
     try:
@@ -46,7 +46,8 @@ async def _warmup_ml_models() -> None:
 async def lifespan(app: FastAPI):
     import asyncio
     await _ensure_dev_user()
-    asyncio.create_task(_warmup_ml_models())
+    if settings.app_env == "development":
+        asyncio.create_task(_warmup_ml_models())
     yield
 
 
@@ -87,10 +88,16 @@ app.include_router(api_router)
 
 
 @app.get("/health", tags=["health"])
+@app.get("/api/v1/health", tags=["health"])
 async def health() -> dict[str, str]:
-    async with engine.connect() as connection:
-        await connection.execute(text("SELECT 1"))
-    return {"status": "ok"}
+    import asyncio
+    try:
+        async with asyncio.timeout(5.0):
+            async with engine.connect() as connection:
+                await connection.execute(text("SELECT 1"))
+        return {"status": "ok"}
+    except Exception as e:
+        return {"status": "degraded", "detail": str(e)}
 
 
 @app.post("/dev/seed-test-user", tags=["development"])
