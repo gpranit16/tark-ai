@@ -3,6 +3,41 @@ from typing import Any
 from app.tools.base import BaseTool
 
 
+TOOL_ALIASES: dict[str, str] = {
+    "search": "web_search",
+    "websearch": "web_search",
+    "search_web": "web_search",
+    "google_search": "web_search",
+    "bing_search": "web_search",
+    "internet_search": "web_search",
+    "news": "news_search",
+    "search_news": "news_search",
+    "get_news": "news_search",
+    "get_weather": "weather",
+    "weather_search": "weather",
+    "calculate": "calculator",
+    "calc": "calculator",
+    "math": "calculator",
+    "stock": "stock_price",
+    "get_stock": "stock_price",
+    "get_stock_price": "stock_price",
+    "crypto": "crypto_price",
+    "get_crypto": "crypto_price",
+    "get_crypto_price": "crypto_price",
+    "currency": "currency_conversion",
+    "convert_currency": "currency_conversion",
+    "fetch_url": "url_reader",
+    "read_url": "url_reader",
+    "web_reader": "url_reader",
+    "memory": "memory_search",
+    "search_memories": "memory_search",
+    "knowledge": "knowledge_search",
+    "search_knowledge": "knowledge_search",
+    "conversation": "conversation_search",
+    "chat_search": "conversation_search",
+}
+
+
 class ToolRegistry:
     """Central registry of all available tools for model discovery and execution."""
 
@@ -11,19 +46,26 @@ class ToolRegistry:
 
     def register(self, tool: BaseTool) -> None:
         """Register a tool instance."""
-        self._tools[tool.name] = tool
+        self._tools[tool.name.lower()] = tool
 
     def unregister(self, name: str) -> None:
         """Unregister a tool by name."""
-        self._tools.pop(name, None)
+        self._tools.pop(name.lower(), None)
 
     def get(self, name: str) -> BaseTool | None:
-        """Lookup a tool by name."""
-        return self._tools.get(name)
+        """Lookup a tool by name or alias."""
+        clean_name = (name or "").strip().lower()
+        tool = self._tools.get(clean_name)
+        if tool is not None:
+            return tool
+        canonical = TOOL_ALIASES.get(clean_name)
+        if canonical:
+            return self._tools.get(canonical)
+        return None
 
     def has_tool(self, name: str) -> bool:
         """Check if a tool exists in registry."""
-        return name in self._tools
+        return self.get(name) is not None
 
     def list_tools(self) -> list[BaseTool]:
         """Return list of all registered tools."""

@@ -211,6 +211,27 @@ def test_parse_tool_calls_json_codeblock_format():
     assert calls[0][1] == {"location": "London"}
 
 
+def test_parse_tool_calls_qwen_format():
+    text = '<tool_call> <function=web_search> {"query": "latest OpenAI ChatGPT new model release 2026", "max_results": 10} </tool_call>'
+    calls = parse_tool_calls(text)
+    assert len(calls) == 1
+    assert calls[0][0] == "web_search"
+    assert calls[0][1]["query"] == "latest OpenAI ChatGPT new model release 2026"
+
+    cleaned = strip_tool_call_markup(text)
+    assert "<tool_call>" not in cleaned
+    assert "function=web_search" not in cleaned
+
+
+def test_tool_registry_aliases():
+    reg = ToolRegistry()
+    calc = CalculatorTool()
+    reg.register(calc)
+    assert reg.get("calculator") is calc
+    assert reg.get("calculate") is calc
+    assert reg.get("calc") is calc
+
+
 def test_format_tools_system_prompt():
     reg = ToolRegistry()
     reg.register(CalculatorTool())

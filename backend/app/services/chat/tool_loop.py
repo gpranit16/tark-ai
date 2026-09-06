@@ -91,34 +91,117 @@ def format_tools_system_prompt(registry: ToolRegistry, allowed_tools: Optional[L
 
 
 def parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
-    """Extract tool calls from model output."""
+    """Extract tool calls from model output supporting standard JSON, Qwen ChatML, XML, and Codeblock formats."""
     calls: List[Tuple[str, Dict[str, Any]]] = []
 
-    # 1. Search for <tool_call>...</tool_call>
-    matches = TOOL_CALL_REGEX.findall(text)
-    for raw_json in matches:
-        try:
-            parsed = json.loads(raw_json)
-            name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-            params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or {}
-            if isinstance(params, str):
-                params = json.loads(params)
-            if name and isinstance(params, dict):
-                calls.append((name, params))
-        except Exception as err:
-            logger.debug("Failed parsing tool call block: %s (%s)", raw_json, err)
+    # 1. Qwen format: <tool_call> <function=web_search> {"query": ...} </tool_call>
+    qwen_fn_matches = re.findall(
+        r"<tool_call>\s*<function=([a-zA-Z0-9_\-]+)>\s*([\s\S]*?)(?:</function>)?\s*</tool_call>",
+        text,
+        re.IGNORECASE,
+    )
+    for fn_name, raw_content in qwen_fn_matches:
+        fn_name = fn_name.strip()
+        raw_content = raw_content.strip()
+        json_match = re.search(r"({[\s\S]*})", raw_content)
+        if json_match:
+            try:
+                params = json.loads(json_match.group(1))
+                if isinstance(params, dict):
+                    params = params.get("arguments") or params.get("parameters") or params
+                    if isinstance(params, str):
+                        try:
+                            params = json.loads(params)
+                        except Exception:
+                            params = {"query": params}
+                    calls.append((fn_name, params if isinstance(params, dict) else {}))
+                    continue
+            except Exception as err:
+                logger.debug("Failed parsing Qwen JSON params: %s (%s)", raw_content, err)
+
+        param_tags = re.findall(r"<parameter=([a-zA-Z0-9_\-]+)>\s*([\s\S]*?)\s*</parameter>", raw_content, re.IGNORECASE)
+        if param_tags:
+            params = {k.strip(): v.strip() for k, v in param_tags}
+            calls.append((fn_name, params))
+            continue
+
+        if raw_content:
+            calls.append((fn_name, {"query": raw_content}))
 
     if calls:
         return calls
 
-    # 2. Search for ```json {"tool": ...} ``` codeblocks
+    # 2. General <tool_call> ... </tool_call> blocks
+    tc_blocks = re.findall(r"<tool_call>\s*([\s\S]*?)\s*</tool_call>", text, re.IGNORECASE)
+    for block in tc_blocks:
+        block = block.strip()
+        # Sub-check for <function=name>
+        fn_match = re.search(r"<function=([a-zA-Z0-9_\-]+)>\s*([\s\S]*)", block, re.IGNORECASE)
+        if fn_match:
+            fn_name = fn_match.group(1).strip()
+            rest = fn_match.group(2).strip()
+            rest = re.sub(r"</function>$", "", rest, flags=re.IGNORECASE).strip()
+            json_match = re.search(r"({[\s\S]*})", rest)
+            if json_match:
+                try:
+                    params = json.loads(json_match.group(1))
+                    if isinstance(params, dict):
+                        params = params.get("arguments") or params.get("parameters") or params
+                    calls.append((fn_name, params if isinstance(params, dict) else {}))
+                    continue
+                except Exception:
+                    pass
+
+        json_match = re.search(r"({[\s\S]*})", block)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(1))
+                name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
+                params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments")
+                if params is None:
+                    params = {k: v for k, v in parsed.items() if k not in ("name", "tool", "function")}
+                elif isinstance(params, str):
+                    try:
+                        params = json.loads(params)
+                    except Exception:
+                        params = {"query": params}
+                if name and isinstance(params, dict):
+                    calls.append((name, params))
+            except Exception as err:
+                logger.debug("Failed parsing tool_call JSON: %s (%s)", block, err)
+
+    if calls:
+        return calls
+
+    # 3. <function_call> ... </function_call>
+    fc_blocks = re.findall(r"<function_call>\s*([\s\S]*?)\s*</function_call>", text, re.IGNORECASE)
+    for block in fc_blocks:
+        json_match = re.search(r"({[\s\S]*})", block)
+        if json_match:
+            try:
+                parsed = json.loads(json_match.group(1))
+                name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
+                params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or {}
+                if isinstance(params, str):
+                    params = json.loads(params)
+                if name and isinstance(params, dict):
+                    calls.append((name, params))
+            except Exception:
+                pass
+
+    if calls:
+        return calls
+
+    # 4. JSON codeblocks ```json ... ```
     cb_matches = JSON_CODEBLOCK_TOOL_REGEX.findall(text)
     for raw_json in cb_matches:
         try:
             parsed = json.loads(raw_json)
             name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-            params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or {}
-            if isinstance(params, str):
+            params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments")
+            if params is None:
+                params = {k: v for k, v in parsed.items() if k not in ("name", "tool", "function")}
+            elif isinstance(params, str):
                 params = json.loads(params)
             if name and isinstance(params, dict):
                 calls.append((name, params))
@@ -134,10 +217,13 @@ def strip_think_markup(text: str) -> str:
 
 
 def strip_tool_call_markup(text: str) -> str:
-    """Remove tool call markup and thinking tags so only clean response remains."""
-    cleaned = TOOL_CALL_REGEX.sub("", text)
+    """Remove all tool call markup, XML tags, and thinking tags so only clean response remains."""
+    cleaned = re.sub(r"<tool_call>[\s\S]*?</tool_call>", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<function_call>[\s\S]*?</function_call>", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<function=[^>]+>[\s\S]*?</function>", "", cleaned, flags=re.IGNORECASE)
     cleaned = JSON_CODEBLOCK_TOOL_REGEX.sub("", cleaned)
     cleaned = strip_think_markup(cleaned)
+    cleaned = re.sub(r"</?(?:tool_call|function_call|function|parameter)[^>]*>", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
 
 
