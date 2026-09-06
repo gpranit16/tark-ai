@@ -75,8 +75,9 @@ class EmailService:
         }
 
         try:
-            # Resend python SDK send
-            response = resend.Emails.send(params)
+            # Resend python SDK non-blocking async thread execution
+            import asyncio
+            response = await asyncio.to_thread(resend.Emails.send, params)
             
             # Log success safely (log only recipient domains, never full email/token)
             domains = [r.split("@")[-1] for r in recipient_list if "@" in r]

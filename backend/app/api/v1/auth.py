@@ -107,18 +107,17 @@ async def signup(
     await session.commit()
     await session.refresh(user, attribute_names=["settings"])
 
-    # Dispatch verification email via Resend (non-fatal if key unconfigured in dev)
+    # Dispatch verification email via Resend in background (non-blocking)
     verification_url = f"{settings.frontend_url}/verify-email?token={raw_token}"
     if email_service.is_configured():
-        try:
-            await email_service.send_verification_email(
+        import asyncio
+        asyncio.create_task(
+            email_service.send_verification_email(
                 to_email=user.email,
                 verification_url=verification_url,
                 user_name=user.name,
             )
-        except Exception:
-            # Error is safely logged by EmailService; account creation succeeds
-            pass
+        )
 
     # Generate JWT tokens
     access_token = create_access_token(user.id)
