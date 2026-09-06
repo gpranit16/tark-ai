@@ -97,20 +97,25 @@ class GroqProvider(AIProvider):
                     )
                 else:
                     raise
-            async for chunk in stream:
-                choice = chunk.choices[0] if chunk.choices else None
-                delta = ""
-                finish_reason = None
-                if choice is not None:
-                    delta = choice.delta.content or ""
-                    finish_reason = choice.finish_reason
-                usage = getattr(chunk, "usage", None)
-                yield ProviderStreamEvent(
-                    delta=delta,
-                    finish_reason=finish_reason,
-                    usage=_usage_from_object(usage),
-                )
-            await client.close()
+            try:
+                async for chunk in stream:
+                    choice = chunk.choices[0] if chunk.choices else None
+                    delta = ""
+                    finish_reason = None
+                    if choice is not None:
+                        delta = choice.delta.content or ""
+                        finish_reason = choice.finish_reason
+                    usage = getattr(chunk, "usage", None)
+                    yield ProviderStreamEvent(
+                        delta=delta,
+                        finish_reason=finish_reason,
+                        usage=_usage_from_object(usage),
+                    )
+            finally:
+                try:
+                    await client.close()
+                except Exception:
+                    pass
         except Exception as exc:
             raise self.normalize_error(exc) from exc
 
