@@ -650,14 +650,56 @@ export default function ChatRoute() {
         )}
         {mainText ? (
           <div className="prose prose-invert max-w-none text-sm leading-relaxed
-            prose-p:my-1 prose-headings:text-gray-100 prose-strong:text-gray-100
-            prose-a:text-accent">
+            prose-p:my-1.5 prose-headings:text-[#F4F2ED] prose-strong:text-[#F4F2ED]
+            prose-a:text-accent prose-hr:border-white/10 prose-ul:my-2 prose-li:my-0.5">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
               components={{
                 code: CodeBlock,
                 pre: ({ children }) => <>{children}</>,
+                table: ({ children }) => (
+                  <div className="my-3 w-full overflow-x-auto rounded-xl border border-white/[0.08] bg-[#0d0d0f]/90 shadow-sm scrollbar-thin">
+                    <table className="w-full text-left text-xs text-[#E5E2DC] border-collapse min-w-[540px]">
+                      {children}
+                    </table>
+                  </div>
+                ),
+                thead: ({ children }) => (
+                  <thead className="bg-white/[0.04] border-b border-white/[0.08] text-[11px] font-semibold uppercase tracking-wider text-[#C9A86A]">
+                    {children}
+                  </thead>
+                ),
+                tbody: ({ children }) => (
+                  <tbody className="divide-y divide-white/[0.04]">
+                    {children}
+                  </tbody>
+                ),
+                tr: ({ children }) => (
+                  <tr className="hover:bg-white/[0.02] transition-colors">
+                    {children}
+                  </tr>
+                ),
+                th: ({ children }) => (
+                  <th className="px-3.5 py-2.5 font-semibold text-[#C9A86A] whitespace-nowrap">
+                    {children}
+                  </th>
+                ),
+                td: ({ children }) => (
+                  <td className="px-3.5 py-2.5 text-[#D8D4CC] leading-relaxed align-top">
+                    {children}
+                  </td>
+                ),
+                a: ({ href, children }) => (
+                  <a
+                    href={href}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-accent hover:underline inline-flex items-center gap-0.5 font-medium"
+                  >
+                    {children}
+                  </a>
+                ),
               }}
             >
               {mainText}

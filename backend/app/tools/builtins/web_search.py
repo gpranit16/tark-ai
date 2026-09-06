@@ -20,6 +20,9 @@ logger = logging.getLogger(__name__)
 FRESHNESS_KEYWORDS = {"latest", "recent", "today", "news", "current", "breaking", "update", "updates", "now", "this week", "this month", "2026"}
 
 
+import httpx
+
+
 class BaseWebSearchProvider(ABC):
     @abstractmethod
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
@@ -60,30 +63,25 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
             payload["topic"] = "news"
             payload["days"] = 7
 
-        req = urllib.request.Request(
-            "https://api.tavily.com/search",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-
         try:
-            with urllib.request.urlopen(req, timeout=8.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-
-            results: List[Dict[str, Any]] = []
-            for item in data.get("results", [])[:max_results]:
-                pub_date = item.get("published_date")
-                results.append({
-                    "title": item.get("title") or "Web Page",
-                    "url": item.get("url") or "",
-                    "snippet": item.get("content") or "",
-                    "published_date": pub_date,
-                    "source": "tavily",
-                })
-            return results
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                resp = await client.post("https://api.tavily.com/search", json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    results: List[Dict[str, Any]] = []
+                    for item in data.get("results", [])[:max_results]:
+                        pub_date = item.get("published_date")
+                        results.append({
+                            "title": item.get("title") or "Web Page",
+                            "url": item.get("url") or "",
+                            "snippet": item.get("content") or "",
+                            "published_date": pub_date,
+                            "source": "tavily",
+                        })
+                    return results
         except Exception as exc:
             logger.warning("Tavily search provider failed: %s", exc)
-            return []
+        return []
 
 
 class GoogleNewsRSSWebProvider(BaseWebSearchProvider):
@@ -92,16 +90,16 @@ class GoogleNewsRSSWebProvider(BaseWebSearchProvider):
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         encoded_query = urllib.parse.quote_plus(query)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        )
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
 
         try:
-            with urllib.request.urlopen(req, timeout=6.0) as resp:
-                content = resp.read().decode("utf-8", errors="ignore")
+            async with httpx.AsyncClient(timeout=4.5, follow_redirects=True) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    return []
+                content = resp.text
 
             items = re.findall(r"<item>([\s\S]*?)</item>", content)
             results: List[Dict[str, Any]] = []
@@ -118,7 +116,7 @@ class GoogleNewsRSSWebProvider(BaseWebSearchProvider):
                 link = html.unescape(link_m.group(1).strip()) if link_m else ""
                 pub_date = pub_m.group(1).strip() if pub_m else None
                 source_name = html.unescape(source_m.group(1).strip()) if source_m else "Google News"
-                
+
                 raw_desc = desc_m.group(1) if desc_m else ""
                 clean_desc = html.unescape(re.sub(r"<[^>]+>", "", raw_desc).strip())
 
@@ -148,9 +146,11 @@ class DuckDuckGoWebSearchProvider(BaseWebSearchProvider):
         }
 
         try:
-            req = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(req, timeout=6.0) as response:
-                content = response.read().decode("utf-8", errors="ignore")
+            async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
+                response = await client.get(url, headers=headers)
+                if response.status_code != 200:
+                    return []
+                content = response.text
 
             results = []
             matches = re.findall(
@@ -194,12 +194,12 @@ class DuckDuckGoWebSearchProvider(BaseWebSearchProvider):
 
 
 class CompositeWebSearchEngine(BaseWebSearchProvider):
-    """Multi-tiered search engine attempting Tavily, Google News RSS, and DuckDuckGo."""
+    """Multi-tiered search engine attempting Google News RSS, Tavily, and DuckDuckGo."""
 
     def __init__(self):
         self.providers: List[BaseWebSearchProvider] = [
-            TavilyWebSearchProvider(),
             GoogleNewsRSSWebProvider(),
+            TavilyWebSearchProvider(),
             DuckDuckGoWebSearchProvider(),
         ]
 
@@ -213,6 +213,7 @@ class CompositeWebSearchEngine(BaseWebSearchProvider):
                 logger.debug("Provider %s failed: %s", provider.__class__.__name__, e)
 
         return []
+
 
 
 class WebSearchTool(BaseTool):

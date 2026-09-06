@@ -80,6 +80,11 @@ def format_tools_system_prompt(registry: ToolRegistry, allowed_tools: Optional[L
         "3. You will receive the tool result in a `<tool_response>` block. Use that data to formulate a comprehensive, helpful, and accurate response.",
         "4. If NO tool is required, answer the user query directly without using any `<tool_call>` tags.",
         "",
+        "## OUTPUT FORMATTING GUIDELINES",
+        "- Present search results, news, and complex data cleanly using crisp headings, concise bullet points, and clickable markdown source links.",
+        "- Avoid gigantic, awkwardly wide raw tables that clip horizontal screens unless explicitly requested by the user.",
+        "- Keep responses clean, elegant, and easy to read.",
+        "",
     ])
 
     return "\n".join(lines)

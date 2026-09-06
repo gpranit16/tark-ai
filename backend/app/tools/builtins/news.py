@@ -47,15 +47,15 @@ class NewsSearchTool(BaseTool):
 
         try:
             # 1. Primary: Real-time Google News RSS Search (Guaranteed fresh publication dates)
-            articles = self._fetch_google_news_rss(query, max_results)
+            articles = await self._fetch_google_news_rss(query, max_results)
 
             # 2. Secondary: Tavily Search if Google News RSS returned empty
             if not articles:
-                articles = self._fetch_tavily_news(query, max_results)
+                articles = await self._fetch_tavily_news(query, max_results)
 
             # 3. Tertiary fallback: DuckDuckGo News
             if not articles:
-                articles = self._fetch_duckduckgo_news(query, max_results)
+                articles = await self._fetch_duckduckgo_news(query, max_results)
 
             now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -94,20 +94,20 @@ class NewsSearchTool(BaseTool):
                 source="News Search",
             )
 
-    def _fetch_google_news_rss(self, query: str, max_results: int) -> List[Dict[str, Any]]:
+    async def _fetch_google_news_rss(self, query: str, max_results: int) -> List[Dict[str, Any]]:
+        import httpx
         encoded_query = urllib.parse.quote_plus(query)
         url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
-
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        )
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
 
         try:
-            with urllib.request.urlopen(req, timeout=6.0) as resp:
-                content = resp.read().decode("utf-8", errors="ignore")
+            async with httpx.AsyncClient(timeout=4.5, follow_redirects=True) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    return []
+                content = resp.text
 
             items = re.findall(r"<item>([\s\S]*?)</item>", content)
             articles: List[Dict[str, Any]] = []
@@ -124,7 +124,7 @@ class NewsSearchTool(BaseTool):
                 link = html.unescape(link_m.group(1).strip()) if link_m else ""
                 pub_date = pub_m.group(1).strip() if pub_m else ""
                 source_name = html.unescape(source_m.group(1).strip()) if source_m else "Google News"
-                
+
                 raw_desc = desc_m.group(1) if desc_m else ""
                 clean_desc = html.unescape(re.sub(r"<[^>]+>", "", raw_desc).strip())
 
@@ -144,7 +144,8 @@ class NewsSearchTool(BaseTool):
             logger.warning("Google News RSS failed: %s", exc)
             return []
 
-    def _fetch_tavily_news(self, query: str, max_results: int) -> List[Dict[str, Any]]:
+    async def _fetch_tavily_news(self, query: str, max_results: int) -> List[Dict[str, Any]]:
+        import httpx
         settings = get_settings()
         api_key = settings.tavily_api_key or os.environ.get("TAVILY_API_KEY")
         if not api_key:
@@ -158,43 +159,39 @@ class NewsSearchTool(BaseTool):
             "max_results": max_results,
         }
 
-        req = urllib.request.Request(
-            "https://api.tavily.com/search",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-        )
-
         try:
-            with urllib.request.urlopen(req, timeout=6.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-
-            articles: List[Dict[str, Any]] = []
-            for item in data.get("results", [])[:max_results]:
-                articles.append({
-                    "title": item.get("title") or "News Article",
-                    "url": item.get("url") or "",
-                    "published_date": item.get("published_date") or "Recent",
-                    "source": "Tavily News",
-                    "snippet": item.get("content") or "",
-                })
-            return articles
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                resp = await client.post("https://api.tavily.com/search", json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    articles: List[Dict[str, Any]] = []
+                    for item in data.get("results", [])[:max_results]:
+                        articles.append({
+                            "title": item.get("title") or "News Article",
+                            "url": item.get("url") or "",
+                            "published_date": item.get("published_date") or "Recent",
+                            "source": "Tavily News",
+                            "snippet": item.get("content") or "",
+                        })
+                    return articles
         except Exception as exc:
             logger.warning("Tavily news search failed: %s", exc)
-            return []
+        return []
 
-    def _fetch_duckduckgo_news(self, query: str, max_results: int) -> List[Dict[str, Any]]:
+    async def _fetch_duckduckgo_news(self, query: str, max_results: int) -> List[Dict[str, Any]]:
+        import httpx
         encoded_query = urllib.parse.quote_plus(f"{query} news")
         url = f"https://html.duckduckgo.com/html/?q={encoded_query}"
-        req = urllib.request.Request(
-            url,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            },
-        )
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
 
         try:
-            with urllib.request.urlopen(req, timeout=5.0) as resp:
-                content = resp.read().decode("utf-8", errors="ignore")
+            async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    return []
+                content = resp.text
 
             articles: List[Dict[str, Any]] = []
             title_matches = re.findall(r'<a class="result__a" href="([^"]+)">(.*?)</a>', content, re.DOTALL)
@@ -225,3 +222,4 @@ class NewsSearchTool(BaseTool):
         except Exception as exc:
             logger.warning("DuckDuckGo news failed: %s", exc)
             return []
+
