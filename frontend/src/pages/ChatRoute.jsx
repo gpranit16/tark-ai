@@ -305,7 +305,7 @@ export default function ChatRoute() {
     if (autoScrollSetting) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [localMessages.length, isStreamingActive, autoScrollSetting]);
+  }, [localMessages.length, isStreaming, autoScrollSetting]);
 
   const handleInput = (e) => {
     setInputMessage(e.target.value);
