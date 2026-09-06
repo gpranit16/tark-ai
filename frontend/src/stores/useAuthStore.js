@@ -17,6 +17,7 @@ export const useAuthStore = create((set, get) => ({
   token: localStorage.getItem(TOKEN_KEY) || null,
   refreshToken: localStorage.getItem(REFRESH_TOKEN_KEY) || null,
   isAuthenticated: !!localStorage.getItem(TOKEN_KEY),
+  isInitialized: false,
   isLoading: false,
   error: null,
 
@@ -44,6 +45,7 @@ export const useAuthStore = create((set, get) => ({
       refreshToken: refreshToken,
       user: user || null,
       isAuthenticated: !!accessToken,
+      isInitialized: true,
       error: null,
     });
   },
@@ -51,15 +53,14 @@ export const useAuthStore = create((set, get) => ({
   initialize: async () => {
     const token = localStorage.getItem(TOKEN_KEY);
     if (!token) {
-      set({ isAuthenticated: false, isLoading: false, user: null });
+      set({ isAuthenticated: false, isInitialized: true, isLoading: false, user: null });
       return;
     }
 
-    set({ isLoading: true });
     try {
       const user = await authApi.getCurrentUser();
       localStorage.setItem(USER_KEY, JSON.stringify(user));
-      set({ user, isAuthenticated: true, isLoading: false, error: null });
+      set({ user, isAuthenticated: true, isInitialized: true, isLoading: false, error: null });
     } catch (err) {
       // If access token expired, attempt refresh
       const rToken = localStorage.getItem(REFRESH_TOKEN_KEY);
@@ -74,6 +75,7 @@ export const useAuthStore = create((set, get) => ({
               token: refreshed.access_token,
               user,
               isAuthenticated: true,
+              isInitialized: true,
               isLoading: false,
               error: null,
             });
@@ -85,7 +87,7 @@ export const useAuthStore = create((set, get) => ({
       }
       // If token invalid and refresh fails, clear session
       get().logout();
-      set({ isLoading: false });
+      set({ isInitialized: true, isLoading: false });
     }
   },
 
