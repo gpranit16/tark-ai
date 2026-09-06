@@ -167,74 +167,76 @@ class FileScopeResolver:
                 refusal_hint=", ".join(filenames),
             )
 
-        # ── 3. Priority 3: Deictic reference ("this document", "this pdf") ───
-        if _DEICTIC_REGEX.search(query_lower):
-            # Check thread history for recent attachments
-            if thread_id is not None:
-                msg_stmt = (
-                    select(Message)
-                    .where(
-                        Message.thread_id == thread_id,
-                        Message.attachments.isnot(None),
+        # ── 3. Priority 3: Thread History Attachments & Deictic References ────
+        if thread_id is not None:
+            msg_stmt = (
+                select(Message)
+                .where(
+                    Message.thread_id == thread_id,
+                    Message.attachments.isnot(None),
+                )
+                .order_by(Message.created_at.desc())
+                .limit(10)
+            )
+            msg_res = await session.execute(msg_stmt)
+            recent_msgs = list(msg_res.scalars().all())
+
+            for msg in recent_msgs:
+                if not msg.attachments:
+                    continue
+                # Extract attachment file_ids
+                att_file_ids: list[UUID] = []
+                for att in msg.attachments:
+                    fid_str = (
+                        att.get("file_id")
+                        if isinstance(att, dict)
+                        else (att.get("id") if isinstance(att, dict) else None)
                     )
-                    .order_by(Message.created_at.desc())
-                    .limit(10)
-                )
-                msg_res = await session.execute(msg_stmt)
-                recent_msgs = list(msg_res.scalars().all())
+                    if fid_str:
+                        try:
+                            att_file_ids.append(UUID(str(fid_str)))
+                        except (ValueError, TypeError):
+                            pass
 
-                for msg in recent_msgs:
-                    if not msg.attachments:
-                        continue
-                    # Extract attachment file_ids
-                    att_file_ids: list[UUID] = []
-                    for att in msg.attachments:
-                        fid_str = att.get("file_id") if isinstance(att, dict) else None
-                        if fid_str:
-                            try:
-                                att_file_ids.append(UUID(str(fid_str)))
-                            except (ValueError, TypeError):
-                                pass
-
-                    if att_file_ids:
-                        # Verify ownership
-                        val_stmt = select(File).where(
-                            File.id.in_(att_file_ids),
-                            File.user_id == user_id,
+                if att_file_ids:
+                    # Verify ownership
+                    val_stmt = select(File).where(
+                        File.id.in_(att_file_ids),
+                        File.user_id == user_id,
+                    )
+                    val_res = await session.execute(val_stmt)
+                    thread_files = list(val_res.scalars().all())
+                    if thread_files:
+                        valid_ids = [f.id for f in thread_files]
+                        filenames = [f.original_filename for f in thread_files]
+                        logger.info(
+                            "[ScopeResolver] Priority 3: Resolved from thread history attachments: %s (ids=%s)",
+                            filenames,
+                            valid_ids,
                         )
-                        val_res = await session.execute(val_stmt)
-                        thread_files = list(val_res.scalars().all())
-                        if thread_files:
-                            valid_ids = [f.id for f in thread_files]
-                            filenames = [f.original_filename for f in thread_files]
-                            logger.info(
-                                "[ScopeResolver] Priority 3: Deictic reference resolved from thread history: %s (ids=%s)",
-                                filenames,
-                                valid_ids,
-                            )
-                            return ResolvedScope(
-                                file_ids=valid_ids,
-                                filenames=filenames,
-                                source="thread_history",
-                                is_document_scoped=True,
-                                refusal_hint=", ".join(filenames),
-                            )
+                        return ResolvedScope(
+                            file_ids=valid_ids,
+                            filenames=filenames,
+                            source="thread_history",
+                            is_document_scoped=True,
+                            refusal_hint=", ".join(filenames),
+                        )
 
-            # If user has only 1 uploaded file total in the knowledge base, resolve to that file
-            if len(user_files) == 1:
-                single_file = user_files[0]
-                logger.info(
-                    "[ScopeResolver] Priority 3: Deictic reference resolved to single user file: %s (id=%s)",
-                    single_file.original_filename,
-                    single_file.id,
-                )
-                return ResolvedScope(
-                    file_ids=[single_file.id],
-                    filenames=[single_file.original_filename],
-                    source="thread_history",
-                    is_document_scoped=True,
-                    refusal_hint=single_file.original_filename,
-                )
+        # Deictic reference without thread attachments (e.g. single user file)
+        if _DEICTIC_REGEX.search(query_lower) and len(user_files) == 1:
+            single_file = user_files[0]
+            logger.info(
+                "[ScopeResolver] Priority 3: Deictic reference resolved to single user file: %s (id=%s)",
+                single_file.original_filename,
+                single_file.id,
+            )
+            return ResolvedScope(
+                file_ids=[single_file.id],
+                filenames=[single_file.original_filename],
+                source="thread_history",
+                is_document_scoped=True,
+                refusal_hint=single_file.original_filename,
+            )
 
         # ── 4 & 5. Priority 4/5: Project or Global Scope ──────────────────────
         return ResolvedScope(
