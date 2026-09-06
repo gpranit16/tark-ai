@@ -53,14 +53,17 @@ class PdfParser(BaseParser):
             except Exception:
                 pass
 
-            # If page text is sparse/scanned and we extracted page images, run OCR on images
+            # If page text is sparse/scanned and we extracted page images, run OCR on images (capped at 2 images per page)
             if (is_scanned or len(raw_text.strip()) < 10) and extracted_images:
                 ocr_used = True
                 ocr_texts: list[str] = []
-                for img_bytes in extracted_images:
-                    ocr_t, _ = await ocr_provider.extract_text(img_bytes)
-                    if ocr_t.strip():
-                        ocr_texts.append(ocr_t.strip())
+                for img_bytes in extracted_images[:2]:
+                    try:
+                        ocr_t, _ = await ocr_provider.extract_text(img_bytes)
+                        if ocr_t.strip():
+                            ocr_texts.append(ocr_t.strip())
+                    except Exception:
+                        pass
                 
                 if ocr_texts:
                     combined_ocr = "\n".join(ocr_texts)

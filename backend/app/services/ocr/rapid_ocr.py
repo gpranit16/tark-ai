@@ -1,3 +1,4 @@
+import asyncio
 import io
 from typing import Any
 from PIL import Image
@@ -23,10 +24,16 @@ class RapidOCRProvider(BaseOCRProvider):
     def provider_name(self) -> str:
         return "rapidocr"
 
-    async def extract_text(self, image_bytes: bytes) -> tuple[str, list[dict[str, Any]]]:
+    def _sync_extract(self, image_bytes: bytes) -> tuple[str, list[dict[str, Any]]]:
         try:
             engine = self._get_engine()
             img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+            
+            # Downscale large images to max 1280px to speed up inference 10x and save memory on cloud
+            max_dimension = 1280
+            if max(img.width, img.height) > max_dimension:
+                img.thumbnail((max_dimension, max_dimension), Image.Resampling.BILINEAR)
+
             img_np = np.array(img)
             result, _ = engine(img_np)
             if not result:
@@ -50,3 +57,14 @@ class RapidOCRProvider(BaseOCRProvider):
             return full_text, blocks
         except Exception:
             return "", []
+
+    async def extract_text(self, image_bytes: bytes) -> tuple[str, list[dict[str, Any]]]:
+        try:
+            # Run CPU-bound OCR in a background worker thread with 12s timeout to never block event loop
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._sync_extract, image_bytes),
+                timeout=12.0
+            )
+        except Exception:
+            return "", []
+
