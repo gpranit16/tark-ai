@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -14,17 +14,23 @@ DEV_TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 async def get_current_user(
     authorization: str | None = Header(default=None),
+    token_param: str | None = Query(default=None, alias="token"),
     session: AsyncSession = Depends(get_db_session),
 ) -> User:
-    """Resolve the currently authenticated user from Bearer token."""
-    if not authorization or not authorization.startswith("Bearer "):
+    """Resolve the currently authenticated user from Bearer token (Header or query param)."""
+    token: str | None = None
+    if authorization and authorization.startswith("Bearer "):
+        token = authorization.split("Bearer ", 1)[1].strip()
+    elif token_param:
+        token = token_param.strip()
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication required. Please provide a valid Bearer token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    token = authorization.split("Bearer ", 1)[1].strip()
     try:
         payload = decode_token(token)
         if payload.get("type") != "access":

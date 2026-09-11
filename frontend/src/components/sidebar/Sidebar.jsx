@@ -9,6 +9,7 @@ import { projectApi } from '../../api/projectApi';
 import {
   MessageSquare,
   Plus,
+  CheckSquare,
   Folder,
   Book,
   Database,
@@ -30,6 +31,7 @@ import {
   Edit2,
   X,
   LogOut,
+  Sparkles,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -189,7 +191,9 @@ export default function Sidebar() {
   if (!isSidebarOpen) return null;
 
   const navItems = [
+    { name: 'My Space', path: '/my-space', icon: Sparkles },
     { name: 'Projects', path: '/projects', icon: Folder },
+    { name: 'Tasks & Planning', path: '/tasks', icon: CheckSquare },
     { name: 'Knowledge Base', path: '/knowledge', icon: Book },
     { name: 'Memory', path: '/memory', icon: Database },
     { name: 'Tools', path: '/tools', icon: Wrench },

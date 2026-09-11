@@ -35,6 +35,13 @@ uploads/
 scratch/
 logs/
 *.log
+*.db
+*.sqlite
+*.sqlite3
+check_*.py
+inspect_*.py
+backend/check_*.py
+backend/inspect_*.py
 
 # IDE & OS files
 .DS_Store

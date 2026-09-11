@@ -26,6 +26,9 @@ class Settings(BaseSettings):
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
     mistral_api_key: str | None = Field(default=None, alias="MISTRAL_API_KEY")
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
+    nvidia_api_key: str | None = Field(default=None, alias="NVIDIA_API_KEY")
+    nvidia_base_url: str = Field(default="https://integrate.api.nvidia.com/v1", alias="NVIDIA_BASE_URL")
+    nvidia_model: str = Field(default="nvidia/nemotron-3.5-lightning-30b-a3b", alias="NVIDIA_MODEL")
     tavily_api_key: str | None = Field(default=None, alias="TAVILY_API_KEY")
     default_provider: str = Field(default="groq", alias="DEFAULT_PROVIDER")
     fast_provider: str = Field(default="groq", alias="FAST_PROVIDER")
@@ -137,8 +140,24 @@ class Settings(BaseSettings):
     research_worker_model: str | None = Field(default=None, alias="RESEARCH_WORKER_MODEL")
     research_synthesizer_model: str | None = Field(default=None, alias="RESEARCH_SYNTHESIZER_MODEL")
 
+    # Voice Mode Settings
+    voice_stt_provider: str = Field(default="browser", alias="VOICE_STT_PROVIDER")
+    voice_tts_provider: str = Field(default="browser", alias="VOICE_TTS_PROVIDER")
+
+    # Google OAuth & Calendar Integration Settings
+    google_client_id: str | None = Field(default=None, alias="GOOGLE_CLIENT_ID")
+    google_client_secret: str | None = Field(default=None, alias="GOOGLE_CLIENT_SECRET")
+    google_redirect_uri: str = Field(
+        default="http://localhost:8001/api/v1/integrations/google/calendar/callback",
+        alias="GOOGLE_REDIRECT_URI",
+    )
+
+    # GitHub MCP & API Integration Settings
+    github_personal_access_token: str | None = Field(default=None, alias="GITHUB_PERSONAL_ACCESS_TOKEN")
+
+
     model_config = SettingsConfigDict(
-        env_file=(".env", "../.env"),
+        env_file=(".env", "../.env", "backend/.env"),
         env_file_encoding="utf-8",
         extra="ignore",
         populate_by_name=True,

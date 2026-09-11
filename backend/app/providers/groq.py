@@ -45,12 +45,12 @@ class GroqProvider(AIProvider):
 
             # Token budget resolution:
             # 1. Explicit max_tokens parameter takes highest precedence
-            # 2. If mode is FAST, use fast mode bounded limit (250)
+            # 2. If mode is FAST, allow 2048 tokens so thinking models can think & complete response
             # 3. For normal chat / coding / reasoning / web search, allow full 4096 tokens
             if max_tokens is not None:
                 kwargs["max_tokens"] = min(max_tokens, 4096)
             elif mode == ConversationMode.FAST:
-                kwargs["max_tokens"] = 250
+                kwargs["max_tokens"] = 2048
             else:
                 kwargs["max_tokens"] = 4096
 
@@ -83,6 +83,7 @@ class GroqProvider(AIProvider):
                     )
                 else:
                     raise
+            tool_calls_acc: dict[int, dict[str, str]] = {}
             try:
                 async for chunk in stream:
                     choice = chunk.choices[0] if chunk.choices else None
@@ -90,24 +91,40 @@ class GroqProvider(AIProvider):
                     finish_reason = None
                     if choice is not None:
                         delta = choice.delta.content or ""
-                        # Handle native Groq tool_calls in stream delta if sent by model
+                        # Accumulate native Groq tool_calls in stream delta if sent by model
                         if hasattr(choice.delta, "tool_calls") and choice.delta.tool_calls:
                             for tc in choice.delta.tool_calls:
+                                idx = getattr(tc, "index", 0) or 0
+                                if idx not in tool_calls_acc:
+                                    tool_calls_acc[idx] = {"name": "", "arguments": ""}
                                 fn = getattr(tc, "function", None)
                                 if fn:
-                                    fn_name = getattr(fn, "name", "")
-                                    fn_args = getattr(fn, "arguments", "")
+                                    fn_name = getattr(fn, "name", None)
+                                    fn_args = getattr(fn, "arguments", None)
                                     if fn_name:
-                                        delta += f'<tool_call>{{"name": "{fn_name}", "arguments": {fn_args or "{}"}}}</tool_call>'
-                                    elif fn_args:
-                                        delta += fn_args
+                                        tool_calls_acc[idx]["name"] += fn_name
+                                    if fn_args:
+                                        tool_calls_acc[idx]["arguments"] += fn_args
                         finish_reason = choice.finish_reason
                     usage = getattr(chunk, "usage", None)
-                    yield ProviderStreamEvent(
-                        delta=delta,
-                        finish_reason=finish_reason,
-                        usage=_usage_from_object(usage),
-                    )
+                    if delta:
+                        yield ProviderStreamEvent(
+                            delta=delta,
+                            finish_reason=finish_reason,
+                            usage=_usage_from_object(usage),
+                        )
+
+                # Flush complete accumulated tool calls if any
+                if tool_calls_acc:
+                    for idx, tc_data in sorted(tool_calls_acc.items()):
+                        t_name = tc_data["name"].strip()
+                        t_args = tc_data["arguments"].strip() or "{}"
+                        if t_name:
+                            yield ProviderStreamEvent(
+                                delta=f'<tool_call>{{"name": "{t_name}", "arguments": {t_args}}}</tool_call>',
+                                finish_reason="tool_calls",
+                                usage=None,
+                            )
             finally:
                 try:
                     await client.close()

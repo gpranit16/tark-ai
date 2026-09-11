@@ -11,6 +11,7 @@ from app.db.session import AsyncSessionLocal, engine
 from app.models.conversation import User
 
 settings = get_settings()
+# Integration reload trigger
 DEV_TEST_USER_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
@@ -45,10 +46,22 @@ async def _warmup_ml_models() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     import asyncio
+    from app.services.tasks.reminder_service import start_reminder_worker, stop_reminder_worker
+
     await _ensure_dev_user()
     if settings.app_env == "development":
         asyncio.create_task(_warmup_ml_models())
-    yield
+    
+    # Start background reminder worker in non-test environments
+    if settings.app_env != "test":
+        start_reminder_worker()
+    try:
+        yield
+    finally:
+        if settings.app_env != "test":
+            stop_reminder_worker()
+
+
 
 
 def get_allowed_origins() -> list[str]:

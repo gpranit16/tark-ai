@@ -6,15 +6,22 @@ Decision is based on:
   2. Document-reference keywords in the message content.
 """
 
-# Keywords that strongly suggest the user is asking about an attached document
-_DOC_REFERENCE_KEYWORDS = frozenset({
-    "document", "file", "pdf", "report", "paper", "attachment",
-    "uploaded", "according to", "based on", "in the", "from the",
-    "the document", "the file", "the report", "the paper",
-    "what does", "what is in", "summarize", "summary of",
-    "page", "section", "paragraph", "table", "chart", "figure",
-    "extract", "find in", "look up", "check the",
-})
+import re
+
+# Keywords and phrases that specifically indicate querying an attached/uploaded document
+_DOC_REFERENCE_PATTERNS = [
+    r"\bthe\s+document\b",
+    r"\bthe\s+pdf\b",
+    r"\bthe\s+attachment\b",
+    r"\buploaded\s+(?:document|file|pdf|report|paper)\b",
+    r"\battached\s+(?:document|file|pdf)\b",
+    r"\bin\s+the\s+(?:document|pdf|uploaded\s+file)\b",
+    r"\bfrom\s+the\s+(?:document|pdf|uploaded\s+file)\b",
+    r"\bsummarize\s+(?:the\s+)?(?:document|pdf|uploaded\s+file)\b",
+    r"\bwhat\s+does\s+the\s+document\s+say\b",
+]
+
+_COMPILED_DOC_PATTERNS = [re.compile(p, re.IGNORECASE) for p in _DOC_REFERENCE_PATTERNS]
 
 
 class RAGRouter:
@@ -47,15 +54,15 @@ class RAGRouter:
         if file_ids:
             return True
 
-        # Keyword and file extension detection
-        content_lower = content.lower()
-        for keyword in _DOC_REFERENCE_KEYWORDS:
-            if keyword in content_lower:
+        # Document reference phrase detection
+        content_lower = content.lower().strip()
+        for pattern in _COMPILED_DOC_PATTERNS:
+            if pattern.search(content_lower):
                 return True
 
         # Common file extensions in query (e.g. "Pan.pdf", "data.csv")
-        import re
-        if re.search(r"\b[\w\-\.]+\.(?:pdf|txt|docx|doc|csv|xlsx|pptx|png|jpg|jpeg|json|md|py|js|ts|html)\b", content_lower):
+        if re.search(r"\b[\w\-.]+\.(?:pdf|txt|docx|doc|csv|xlsx|pptx|png|jpg|jpeg|json|md|py|js|ts|html)\b", content_lower):
             return True
 
         return False
+

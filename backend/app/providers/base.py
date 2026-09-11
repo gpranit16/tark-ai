@@ -9,6 +9,7 @@ class ProviderName(StrEnum):
     GROQ = "groq"
     GEMINI = "gemini"
     MISTRAL = "mistral"
+    NVIDIA = "nvidia"
 
 
 class ProviderErrorCode(StrEnum):

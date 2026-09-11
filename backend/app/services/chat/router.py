@@ -16,6 +16,7 @@ from app.providers.base import (
 from app.providers.gemini import GeminiProvider
 from app.providers.groq import GroqProvider
 from app.providers.mistral import MistralProvider
+from app.providers.nvidia import NvidiaProvider
 
 logger = logging.getLogger(__name__)
 
@@ -32,18 +33,26 @@ class ModelRouter:
     def __init__(self, providers: dict[ProviderName, AIProvider], settings: Settings | None = None) -> None:
         self.providers = providers
         self.settings = settings or get_settings()
-        self.fallback_order = [ProviderName.GROQ, ProviderName.GEMINI, ProviderName.MISTRAL]
+        self.fallback_order = [ProviderName.GROQ, ProviderName.NVIDIA, ProviderName.GEMINI, ProviderName.MISTRAL]
 
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> "ModelRouter":
         settings = settings or get_settings()
         default_groq_model = settings.normal_model or "qwen/qwen3.8-27b"
+        default_nvidia_model = settings.nvidia_model or "nvidia/nemotron-3.5-lightning-30b-a3b"
         providers: dict[ProviderName, AIProvider] = {}
 
         if settings.groq_api_key or True:
             providers[ProviderName.GROQ] = GroqProvider(
                 api_key=settings.groq_api_key,
                 default_model=default_groq_model,
+                timeout=settings.provider_timeout_seconds,
+            )
+        if settings.nvidia_api_key or True:
+            providers[ProviderName.NVIDIA] = NvidiaProvider(
+                api_key=settings.nvidia_api_key,
+                base_url=settings.nvidia_base_url,
+                default_model=default_nvidia_model,
                 timeout=settings.provider_timeout_seconds,
             )
         if settings.gemini_api_key:
@@ -69,7 +78,17 @@ class ModelRouter:
         model: str | None = None,
         fallback_used: bool = False,
     ) -> ProviderSelection:
-        provider_name = self._provider_name(provider) if provider else self._provider_for_mode(mode)
+        if provider:
+            provider_name = self._provider_name(provider)
+        elif model and (model.startswith("nvidia") or "nemotron" in model.lower()):
+            provider_name = ProviderName.NVIDIA
+        elif model and model.startswith("gemini"):
+            provider_name = ProviderName.GEMINI
+        elif model and model.startswith("mistral"):
+            provider_name = ProviderName.MISTRAL
+        else:
+            provider_name = self._provider_for_mode(mode)
+
         selected_provider = self.providers.get(provider_name)
         if selected_provider is None:
             raise ProviderError(ProviderErrorCode.BAD_REQUEST, f"Unsupported or unconfigured provider: {provider_name}", provider=provider_name)
@@ -82,6 +101,8 @@ class ModelRouter:
             if provider_name == ProviderName.GEMINI and not selected_model.startswith("gemini"):
                 selected_model = selected_provider.default_model
             elif provider_name == ProviderName.MISTRAL and not selected_model.startswith("mistral"):
+                selected_model = selected_provider.default_model
+            elif provider_name == ProviderName.NVIDIA and not (selected_model.startswith("nvidia") or "nemotron" in selected_model.lower()):
                 selected_model = selected_provider.default_model
             elif provider_name == ProviderName.GROQ and selected_model in {"llama-3.3-70b-versatile", "llama-3.3-70b-specdec"}:
                 selected_model = self._model_for_mode(mode) or "qwen/qwen3.8-27b"

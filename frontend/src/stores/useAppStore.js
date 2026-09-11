@@ -84,7 +84,17 @@ export const useAppStore = create((set, get) => ({
   },
   
   model: 'qwen/qwen3.8-27b',
-  setModel: (model) => set({ model }),
+  setModel: (model) => {
+    let provider = 'groq';
+    if (model.startsWith('nvidia/') || model.includes('nemotron')) {
+      provider = 'nvidia';
+    } else if (model.startsWith('gemini')) {
+      provider = 'gemini';
+    } else if (model.startsWith('mistral')) {
+      provider = 'mistral';
+    }
+    set({ model, provider });
+  },
   
   provider: 'groq',
   setProvider: (provider) => set({ provider }),

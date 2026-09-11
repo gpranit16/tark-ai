@@ -12,6 +12,8 @@ import ProjectsPage from './pages/ProjectsPage';
 import KnowledgePage from './pages/KnowledgePage';
 import ToolsPage from './pages/ToolsPage';
 import SettingsPage from './pages/SettingsPage';
+import TasksPage from './pages/TasksPage';
+import MySpacePage from './pages/MySpacePage';
 import { useAuthStore } from './stores/useAuthStore';
 
 const queryClient = new QueryClient({
@@ -55,6 +57,14 @@ function AppRouter() {
             }
           />
           <Route
+            path="my-space"
+            element={
+              <ProtectedRoute>
+                <MySpacePage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
             path="projects"
             element={
               <ProtectedRoute>
@@ -67,6 +77,14 @@ function AppRouter() {
             element={
               <ProtectedRoute>
                 <ProjectsPage />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="tasks"
+            element={
+              <ProtectedRoute>
+                <TasksPage />
               </ProtectedRoute>
             }
           />

@@ -11,6 +11,7 @@ from app.db.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 
 if TYPE_CHECKING:
     from app.models.file import File
+    from app.models.integration import UserIntegration
     from app.models.memory import Memory
     from app.models.research import ResearchSession
     from app.models.settings import UserSettings
@@ -51,6 +52,12 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     auth_tokens: Mapped[list["AuthToken"]] = relationship(
         "AuthToken",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    integrations: Mapped[list["UserIntegration"]] = relationship(
+        "UserIntegration",
         back_populates="user",
         cascade="all, delete-orphan",
         passive_deletes=True,

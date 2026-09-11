@@ -197,6 +197,12 @@ class SettingsService:
                 default_model=self.settings.normal_model,
             ),
             ProviderHealthInfo(
+                provider="nvidia",
+                display_name="NVIDIA",
+                status="available" if bool(self.settings.nvidia_api_key) else "not_configured",
+                default_model=self.settings.nvidia_model or "nvidia/nemotron-3.5-lightning-30b-a3b",
+            ),
+            ProviderHealthInfo(
                 provider="gemini",
                 display_name="Google Gemini",
                 status="available" if bool(self.settings.gemini_api_key) else "not_configured",

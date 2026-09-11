@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { settingsApi } from '../api/settingsApi';
 import { useAppStore } from '../stores/useAppStore';
 import { useAuthStore } from '../stores/useAuthStore';
 import ProfileModal from '../components/auth/ProfileModal';
+import GoogleCalendarCard from '../components/personal/GoogleCalendarCard';
+import GitHubIntegrationCard from '../components/personal/GitHubIntegrationCard';
 import {
   Sliders,
   Palette,
@@ -28,6 +30,7 @@ import {
   Lock,
   Database,
   ArrowRight,
+  Calendar,
 } from 'lucide-react';
 import clsx from 'clsx';
 
@@ -35,15 +38,39 @@ const DEV_USER_ID = '00000000-0000-0000-0000-000000000001';
 
 export default function SettingsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const queryClient = useQueryClient();
   const setUserSettingsStore = useAppStore((s) => s.setUserSettings);
   const user = useAuthStore((s) => s.user);
 
-  const [activeTab, setActiveTab] = useState('general');
+  const [activeTab, setActiveTab] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('tab') || 'general';
+  });
   const [searchQuery, setSearchQuery] = useState('');
   const [showResetModal, setShowResetModal] = useState(false);
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [savedFeedback, setSavedFeedback] = useState(false);
+  const [oauthToast, setOauthToast] = useState(null);
+
+  // Check URL params for OAuth redirect feedback
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tabParam = params.get('tab');
+    const statusParam = params.get('status');
+    const errorParam = params.get('error');
+
+    if (tabParam) {
+      setActiveTab(tabParam);
+    }
+    if (statusParam === 'google_calendar_connected') {
+      setOauthToast({ type: 'success', message: 'Google Calendar successfully connected!' });
+      setTimeout(() => setOauthToast(null), 5000);
+    } else if (errorParam) {
+      setOauthToast({ type: 'error', message: `Google connection failed: ${errorParam}` });
+      setTimeout(() => setOauthToast(null), 5000);
+    }
+  }, [location.search]);
 
   // Load settings envelope from backend
   const { data: envelope, isLoading, isError, error, refetch } = useQuery({
@@ -102,6 +129,7 @@ export default function SettingsPage() {
 
   const navSections = [
     { id: 'general', label: 'General', icon: Sliders, desc: 'Display name, language, and default mode' },
+    { id: 'connections', label: 'Connections', icon: Calendar, desc: 'Google Calendar and personal integrations' },
     { id: 'appearance', label: 'Appearance', icon: Palette, desc: 'Theme, density, and interface styling' },
     { id: 'chat', label: 'Chat', icon: MessageSquare, desc: 'Streaming, enter-to-send, and view controls' },
     { id: 'models', label: 'Models', icon: Cpu, desc: 'Mode-to-model routing and provider status' },
@@ -212,6 +240,27 @@ export default function SettingsPage() {
         {/* Right Settings Content Panel */}
         <main className="flex-1 overflow-y-auto p-4 md:p-8 bg-background">
           <div className="max-w-3xl mx-auto space-y-6">
+            {/* OAuth Toast Notification */}
+            {oauthToast && (
+              <div
+                className={clsx(
+                  "p-3.5 rounded-xl border flex items-center justify-between gap-3 text-xs animate-in fade-in slide-in-from-top-2 duration-200",
+                  oauthToast.type === 'success'
+                    ? "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                    : "bg-red-500/10 border-red-500/20 text-red-400"
+                )}
+              >
+                <div className="flex items-center gap-2">
+                  <Check size={14} className={oauthToast.type === 'success' ? 'text-emerald-400' : 'hidden'} />
+                  <AlertTriangle size={14} className={oauthToast.type === 'error' ? 'text-red-400' : 'hidden'} />
+                  <span>{oauthToast.message}</span>
+                </div>
+                <button onClick={() => setOauthToast(null)} className="text-muted-foreground hover:text-gray-100 text-[11px]">
+                  Dismiss
+                </button>
+              </div>
+            )}
+
             {/* GENERAL SETTINGS */}
             {activeTab === 'general' && (
               <div className="space-y-6 animate-in fade-in-50 duration-150">
@@ -251,25 +300,24 @@ export default function SettingsPage() {
                   {/* Language */}
                   <div className="bg-surface border border-border rounded-xl p-4 space-y-2">
                     <label className="text-xs font-medium text-gray-200">Language</label>
-                    <p className="text-[11px] text-muted-foreground">Select preferred interface and response language.</p>
+                    <p className="text-[11px] text-muted-foreground">Select your preferred system language.</p>
                     <select
                       value={settings.language || 'en'}
                       onChange={(e) => handleUpdate({ language: e.target.value })}
-                      className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs text-gray-200 focus:outline-none focus:border-accent max-w-xs"
+                      className="bg-background border border-border rounded-lg px-3 py-1.5 text-xs text-gray-100 focus:outline-none focus:border-accent"
                     >
-                      <option value="en">English</option>
-                      <option value="hi">Hindi (हिंदी)</option>
-                      <option value="es">Spanish (Español)</option>
-                      <option value="fr">French (Français)</option>
-                      <option value="de">German (Deutsch)</option>
-                      <option value="ja">Japanese (日本語)</option>
+                      <option value="en">English (US)</option>
+                      <option value="es">Español</option>
+                      <option value="fr">Français</option>
+                      <option value="de">Deutsch</option>
+                      <option value="ja">日本語</option>
                     </select>
                   </div>
 
-                  {/* Default Chat Mode */}
-                  <div className="bg-surface border border-border rounded-xl p-4 space-y-3">
+                  {/* Default Conversation Mode */}
+                  <div className="bg-surface border border-border rounded-xl p-4 space-y-2">
                     <div>
-                      <label className="text-xs font-medium text-gray-200">Default Chat Mode</label>
+                      <label className="text-xs font-medium text-gray-200">Default Conversation Mode</label>
                       <p className="text-[11px] text-muted-foreground">New conversations will start in this mode automatically.</p>
                     </div>
 
@@ -297,6 +345,26 @@ export default function SettingsPage() {
                       })}
                     </div>
                   </div>
+                </div>
+              </div>
+            )}
+
+            {/* PERSONAL CONNECTIONS & INTEGRATIONS */}
+            {activeTab === 'connections' && (
+              <div className="space-y-6 animate-in fade-in-50 duration-150">
+                <div className="border-b border-border/50 pb-3">
+                  <h2 className="text-base font-semibold text-gray-100 flex items-center gap-2">
+                    <Calendar size={18} className="text-accent" />
+                    Personal Connections & Integrations
+                  </h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Connect your personal Google Calendar and external accounts to power schedule-aware AI planning.
+                  </p>
+                </div>
+
+                <div className="space-y-5">
+                  <GoogleCalendarCard />
+                  <GitHubIntegrationCard />
                 </div>
               </div>
             )}

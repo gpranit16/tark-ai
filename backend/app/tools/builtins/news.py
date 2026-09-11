@@ -38,7 +38,11 @@ class NewsSearchTool(BaseTool):
     input_schema: Type[BaseModel] = NewsSearchInput
 
     async def execute(self, arguments: Dict[str, Any], context: ToolExecutionContext) -> ToolResult:
-        query = str(arguments.get("query", "")).strip()
+        query = str(
+            arguments.get("query")
+            or (arguments.get("parameters", {}).get("query") if isinstance(arguments.get("parameters"), dict) else "")
+            or ""
+        ).strip()
         max_results = min(int(arguments.get("max_results", 5)), 10)
         max_results = max(1, max_results)
 

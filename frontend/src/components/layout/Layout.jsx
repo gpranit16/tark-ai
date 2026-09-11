@@ -1,6 +1,7 @@
 import { Outlet } from 'react-router-dom';
 import Sidebar from '../sidebar/Sidebar';
 import ContextPanel from '../context/ContextPanel';
+import ReminderNotificationListener from '../tasks/ReminderNotificationListener';
 import { useAppStore } from '../../stores/useAppStore';
 
 export default function Layout() {
@@ -13,6 +14,7 @@ export default function Layout() {
         <Outlet />
       </main>
       {isContextPanelOpen && <ContextPanel />}
+      <ReminderNotificationListener />
     </div>
   );
 }

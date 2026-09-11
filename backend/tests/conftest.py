@@ -24,13 +24,17 @@ configure_event_loop_policy()
 
 from app.db.session import AsyncSessionLocal
 from app.main import app
-from app.models.conversation import Message, Project, Thread, User
+from app.models.conversation import AuthToken, Message, Project, Thread, User
 from app.models.file import File
 from app.models.document import ParsedDocument
 from app.models.chunk import DocumentChunk
 from app.models.memory import Memory
 from app.models.research import ResearchSession
 from app.models.settings import UserSettings
+from app.models.integration import UserIntegration
+from app.models.task import Task, TaskCategory, TaskReminder
+from app.db.base import Base
+from app.db.session import engine
 
 
 @pytest.fixture
@@ -41,6 +45,8 @@ def client() -> Generator[TestClient, None, None]:
 
 @pytest.fixture(autouse=True)
 async def clean_database() -> AsyncGenerator[None, None]:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
     async with AsyncSessionLocal() as session:
         await _clear_tables(session)
     yield
@@ -49,6 +55,12 @@ async def clean_database() -> AsyncGenerator[None, None]:
 
 
 async def _clear_tables(session: AsyncSession) -> None:
+    from uuid import UUID
+    dev_uid = UUID("00000000-0000-0000-0000-000000000001")
+    await session.execute(delete(TaskReminder))
+    await session.execute(delete(Task))
+    await session.execute(delete(TaskCategory))
+    await session.execute(delete(UserIntegration))
     await session.execute(delete(UserSettings))
     await session.execute(delete(ResearchSession))
     await session.execute(delete(Memory))
@@ -58,10 +70,13 @@ async def _clear_tables(session: AsyncSession) -> None:
     await session.execute(delete(Message))
     await session.execute(delete(Thread))
     await session.execute(delete(Project))
+    await session.execute(delete(AuthToken))
     await session.execute(delete(User))
-    from uuid import UUID
-    session.add(User(id=UUID("00000000-0000-0000-0000-000000000001")))
     await session.commit()
+    
+    session.add(User(id=dev_uid))
+    await session.commit()
+
 
 
 @pytest.fixture

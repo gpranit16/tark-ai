@@ -13,6 +13,9 @@ from app.api.v1.retrieval import router as retrieval_router
 from app.api.v1.settings import router as settings_router
 from app.api.v1.threads import router as threads_router
 from app.api.v1.tools import router as tools_router
+from app.api.v1.voice import router as voice_router
+from app.api.v1.integrations import router as integrations_router
+from app.api.v1.tasks import router as tasks_router
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth_router)
@@ -28,5 +31,11 @@ api_router.include_router(tools_router)
 api_router.include_router(research_router)
 api_router.include_router(coding_router)
 api_router.include_router(settings_router)
+api_router.include_router(voice_router)
+api_router.include_router(integrations_router)
+api_router.include_router(tasks_router)
+
+
+
 
 

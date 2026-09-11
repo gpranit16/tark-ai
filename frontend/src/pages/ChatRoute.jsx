@@ -10,7 +10,7 @@ import { threadApi } from '../api/threadApi';
 import { fileApi } from '../api/fileApi';
 import { settingsApi } from '../api/settingsApi';
 import { useSSE } from '../hooks/useSSE';
-import { Send, Square, Globe, EyeOff, ShieldAlert, Sparkles, Code2, Brain, Loader2, FileText, BookOpen, Database, Image as ImageIcon, HardDrive, Cloud } from 'lucide-react';
+import { Send, Square, Globe, EyeOff, ShieldAlert, Sparkles, Code2, Brain, Loader2, FileText, BookOpen, Database, Image as ImageIcon, HardDrive, Cloud, Mic } from 'lucide-react';
 import clsx from 'clsx';
 import 'highlight.js/styles/atom-one-dark.css';
 import FileUploader from '../components/chat/FileUploader';
@@ -24,6 +24,8 @@ import TarkAmbientBackground from '../components/TarkAmbientBackground';
 import SplineRobot from '../components/SplineRobot';
 import TarkAssistantAvatar from '../components/chat/TarkAssistantAvatar';
 import ModeModelSelector from '../components/chat/ModeModelSelector';
+import VoiceModeModal from '../components/chat/VoiceModeModal';
+import { useVoiceSession } from '../hooks/useVoiceSession';
 
 const DEV_USER_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -620,6 +622,25 @@ export default function ChatRoute() {
     });
   }, [threadId, isStreaming, provider, model, mode, navigate, queryClient, streamChat, uploadedFiles, isTemporaryChat, webSearchEnabled]);
 
+  const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
+
+  const voiceSession = useVoiceSession({
+    isOpen: isVoiceModeOpen,
+    onSendMessage: sendMessage,
+    isStreaming,
+    streamingDisplay,
+    stopStreaming,
+  });
+
+  const handleOpenVoiceMode = () => {
+    if (!isAuthenticated) {
+      sessionStorage.setItem('tarkai_pending_prompt', 'Voice conversation');
+      navigate('/login', { state: { from: location.pathname || '/' } });
+      return;
+    }
+    setIsVoiceModeOpen(true);
+  };
+
   const renderContent = (content) => {
     if (!content) return null;
     
@@ -706,9 +727,15 @@ export default function ChatRoute() {
             </ReactMarkdown>
           </div>
         ) : thinkingText && !mainText ? (
-          <div className="text-xs text-muted-foreground italic animate-pulse">
-            Thinking…
-          </div>
+          isStreamingActive ? (
+            <div className="text-xs text-muted-foreground italic animate-pulse">
+              Thinking…
+            </div>
+          ) : (
+            <div className="prose prose-invert max-w-none text-sm leading-relaxed text-[#D8D4CC]">
+              {thinkingText}
+            </div>
+          )
         ) : null}
       </div>
     );
@@ -1198,21 +1225,31 @@ export default function ChatRoute() {
                 <div className="h-3.5 w-px bg-white/[0.06] mx-0.5" />
                 <ModeModelSelector mode={mode} setMode={setMode} model={model} setModel={setModel} />
               </div>
-              {isStreaming ? (
-                <button onClick={stopStreaming} title="Stop generating"
-                  className="w-8 h-8 flex items-center justify-center bg-[#141415] border border-white/[0.08] text-[#F2F0EB] rounded-full hover:bg-[#1C1C20] transition-all duration-150">
-                  <Square size={13} fill="currentColor" />
-                </button>
-              ) : (
+              <div className="flex items-center gap-1.5">
                 <button
-                  onClick={() => sendMessage(inputMessage)}
-                  disabled={!inputMessage.trim() && uploadedFiles.length === 0}
-                  title="Send"
-                  className="w-8 h-8 flex items-center justify-center bg-accent text-[#080808] rounded-full hover:bg-accent-highlight active:scale-95 transition-all duration-150 disabled:opacity-20 disabled:cursor-not-allowed shadow-[0_2px_14px_rgba(201,168,106,0.25)]"
+                  type="button"
+                  onClick={handleOpenVoiceMode}
+                  title="Start Voice Mode"
+                  className="w-8 h-8 flex items-center justify-center rounded-full bg-[#141415] hover:bg-[#1E1E22] text-[#A3A09A] hover:text-[#C9A86A] border border-white/[0.08] hover:border-[#C9A86A]/30 transition-all duration-150"
                 >
-                  <Send size={13} strokeWidth={2.2} />
+                  <Mic size={14} />
                 </button>
-              )}
+                {isStreaming ? (
+                  <button onClick={stopStreaming} title="Stop generating"
+                    className="w-8 h-8 flex items-center justify-center bg-[#141415] border border-white/[0.08] text-[#F2F0EB] rounded-full hover:bg-[#1C1C20] transition-all duration-150">
+                    <Square size={13} fill="currentColor" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => sendMessage(inputMessage)}
+                    disabled={!inputMessage.trim() && uploadedFiles.length === 0}
+                    title="Send"
+                    className="w-8 h-8 flex items-center justify-center bg-accent text-[#080808] rounded-full hover:bg-accent-highlight active:scale-95 transition-all duration-150 disabled:opacity-20 disabled:cursor-not-allowed shadow-[0_2px_14px_rgba(201,168,106,0.25)]"
+                  >
+                    <Send size={13} strokeWidth={2.2} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
           <p className="text-center text-[11px] text-[#77736D] mt-2 tracking-[0.01em]">
@@ -1220,6 +1257,24 @@ export default function ChatRoute() {
           </p>
         </div>
       </div>
+
+      <VoiceModeModal
+        isOpen={isVoiceModeOpen}
+        onClose={() => setIsVoiceModeOpen(false)}
+        voiceState={voiceSession.voiceState}
+        audioLevel={voiceSession.audioLevel}
+        userTranscript={voiceSession.userTranscript}
+        assistantTranscript={voiceSession.assistantTranscript}
+        isMicMuted={voiceSession.isMicMuted}
+        isSpeakerMuted={voiceSession.isSpeakerMuted}
+        errorMessage={voiceSession.errorMessage}
+        toggleMicMute={voiceSession.toggleMicMute}
+        toggleSpeakerMute={voiceSession.toggleSpeakerMute}
+        interrupt={voiceSession.interrupt}
+        mode={mode}
+        model={model}
+        provider={provider}
+      />
     </div>
   );
 }

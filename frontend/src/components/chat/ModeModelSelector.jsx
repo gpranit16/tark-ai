@@ -73,6 +73,13 @@ const MODELS = [
     icon: Cpu,
   },
   {
+    id: 'nvidia/nemotron-3.5-lightning-30b-a3b',
+    name: 'Nemotron 3.5 Lightning',
+    badge: 'NVIDIA',
+    badgeColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+    icon: Sparkles,
+  },
+  {
     id: 'openai/gpt-oss-120b',
     name: 'gpt-oss-120b',
     badge: 'Deep Reasoning',

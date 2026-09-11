@@ -5,6 +5,15 @@ from app.models.chunk import DocumentChunk
 from app.models.memory import Memory
 from app.models.research import ResearchSession
 from app.models.settings import UserSettings
+from app.models.integration import UserIntegration
+from app.models.task import (
+    Task,
+    TaskCategory,
+    TaskPriority,
+    TaskReminder,
+    TaskStatus,
+    ReminderStatus,
+)
 
 __all__ = [
     "Message",
@@ -17,6 +26,15 @@ __all__ = [
     "Memory",
     "ResearchSession",
     "UserSettings",
+    "UserIntegration",
+    "Task",
+    "TaskCategory",
+    "TaskPriority",
+    "TaskReminder",
+    "TaskStatus",
+    "ReminderStatus",
 ]
+
+
 
 
