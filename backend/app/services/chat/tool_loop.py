@@ -592,6 +592,10 @@ class ToolCallOrchestrator:
         while iteration < max_iterations:
             iteration += 1
             iteration_output: List[str] = []
+            stream_buffer = ""
+            is_tool_call_detected = False
+            decision_made = False
+            streamed_any = False
 
             try:
                 async for selection, event in self.router.stream(
@@ -609,6 +613,44 @@ class ToolCallOrchestrator:
 
                     if event.delta:
                         iteration_output.append(event.delta)
+
+                        if not decision_made:
+                            stream_buffer += event.delta
+                            stripped_buf = stream_buffer.lstrip()
+
+                            # Check if thinking block is open
+                            if "<think>" in stripped_buf:
+                                if "</think>" in stripped_buf:
+                                    _, _, after_think = stripped_buf.partition("</think>")
+                                    stream_buffer = after_think
+                                    stripped_buf = stream_buffer.lstrip()
+                                else:
+                                    continue
+
+                            tool_indicators = ("<tool_call", "<function", "```json", '{"name"', '{"tool"', '{"function"')
+                            is_potential_prefix = any(
+                                ind.startswith(stripped_buf)
+                                for ind in tool_indicators
+                                if len(stripped_buf) < len(ind)
+                            )
+                            is_confirmed_tool = any(stripped_buf.startswith(ind) for ind in tool_indicators)
+
+                            if is_confirmed_tool:
+                                is_tool_call_detected = True
+                                decision_made = True
+                            elif not is_potential_prefix and (len(stripped_buf) >= 10 or "\n" in stripped_buf or any(ch.isalpha() for ch in stripped_buf[:4])):
+                                decision_made = True
+                                is_tool_call_detected = False
+                                clean_buf = strip_tool_call_markup(stream_buffer)
+                                if clean_buf:
+                                    yield text_delta(clean_buf)
+                                    streamed_any = True
+                                stream_buffer = ""
+                        else:
+                            if not is_tool_call_detected:
+                                yield text_delta(event.delta)
+                                streamed_any = True
+
             except Exception as stream_err:
                 logger.warning("Stream error in tool loop iteration %d: %s", iteration, stream_err)
                 yield text_delta(f"I encountered an issue: {stream_err}. Please try again.")
@@ -626,9 +668,10 @@ class ToolCallOrchestrator:
 
             if not tool_calls:
                 # No tool call needed -> final answer reached
-                clean_text = strip_tool_call_markup(raw_text) or raw_text
-                if clean_text:
-                    yield text_delta(clean_text)
+                if not streamed_any:
+                    clean_text = strip_tool_call_markup(raw_text) or raw_text
+                    if clean_text:
+                        yield text_delta(clean_text)
                 return
 
             # Tool calls detected! Execute each tool sequentially

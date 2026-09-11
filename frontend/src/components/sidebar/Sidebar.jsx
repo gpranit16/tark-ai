@@ -91,6 +91,8 @@ export default function Sidebar() {
         is_archived: false,
       }),
     enabled: !!isAuthenticated,
+    staleTime: 1000 * 15,
+    retry: 1,
   });
 
   // Archived threads query
@@ -102,6 +104,8 @@ export default function Sidebar() {
         is_archived: true,
       }),
     enabled: !!isAuthenticated,
+    staleTime: 1000 * 30,
+    retry: 1,
   });
 
   const handleNewChat = (e) => {
@@ -206,10 +210,12 @@ export default function Sidebar() {
     return (t.title || 'Untitled').toLowerCase().includes(searchQuery.toLowerCase());
   };
 
-  const filteredActive = activeThreads.filter(filterFn);
+  const safeActive = Array.isArray(activeThreads) ? activeThreads : [];
+  const filteredActive = safeActive.filter(filterFn);
   const pinnedThreads = filteredActive.filter((t) => t.is_pinned);
   const recentThreads = filteredActive.filter((t) => !t.is_pinned);
-  const filteredArchived = archivedThreads.filter(filterFn);
+  const safeArchived = Array.isArray(archivedThreads) ? archivedThreads : [];
+  const filteredArchived = safeArchived.filter(filterFn);
 
   // Render a thread list item with 3-dot dropdown menu and inline rename
   const renderThreadItem = (thread, isArchivedSection = false) => {
@@ -573,7 +579,7 @@ export default function Sidebar() {
           <div className="text-[9.5px] font-semibold text-[#767676] uppercase tracking-[0.1em] px-2 mb-1.5">
             Recent
           </div>
-          {isLoadingActive ? (
+          {isLoadingActive && safeActive.length === 0 ? (
             <div className="px-2 text-[12px] text-[#767676] animate-pulse py-1.5">Loading…</div>
           ) : recentThreads.length > 0 ? (
             <div className="space-y-px">
