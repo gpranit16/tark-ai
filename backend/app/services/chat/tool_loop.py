@@ -170,15 +170,22 @@ def format_tools_system_prompt(
         "     * Example: If user previously said 'I ate mango today' and now asks 'What did I eat?', reply directly 'You ate a mango today!' with ZERO tool calls.",
         "     * Example: If user previously said 'My exam is on Monday' and asks 'When is my exam?', reply directly 'Your exam is on Monday.' with ZERO tool calls.",
         "",
-        "2. LONG-TERM USER MEMORY (`search_user_memory`):",
+        "2. USER DECLARATIONS vs MEMORY QUERIES (ZERO FALSE SEARCHES):",
+        "   - When the user tells you about themselves, their role, status, or preferences (e.g. 'I am a third year CS student', 'I live in Delhi', 'My goal is to learn Rust'):",
+        "     * THIS IS A DECLARATION / INTRODUCTION, NOT A DATABASE SEARCH QUERY.",
+        "     * STRICT PROHIBITION: You are STRICTLY FORBIDDEN from calling `search_user_memory` or `search_knowledge_base` to 'look up' what the user just declared!",
+        "     * Acknowledge warmly and converse directly (e.g. 'Got it! As a 3rd-year CSE student, I can assist you with DSA, system design, web dev, and project building. What are you working on today?').",
+        "   - ONLY invoke `search_user_memory` when the user asks a retrospective recall question about previously saved information (e.g. 'What is my saved address?', 'What did I save earlier?') and the information is NOT in the current thread.",
+        "",
+        "3. LONG-TERM USER MEMORY (`search_user_memory`):",
         "   - ONLY call `search_user_memory` if the user is explicitly asking about facts saved from past sessions or if the fact is completely missing from this active thread.",
         "   - If `search_user_memory` returns no items or empty count, NEVER contradict yourself by saying you found it. Trust the empty result.",
         "",
-        "3. ASSISTANT IDENTITY & RUNTIME MODEL INFO:",
+        "4. ASSISTANT IDENTITY & RUNTIME MODEL INFO:",
         "   - You are TARK AI (TA513), a smart luxury personal AI assistant.",
         "   - When asked 'What is your model?', 'What model are you using?', 'What is your model name?', 'Who are you?', answer directly that you are TARK AI (TA513) powered by modern high-performance AI models without calling `search_knowledge_base`, `search_user_memory`, or document retrieval tools.",
         "",
-        "4. STRICT TOOL CALL SYNTAX & ZERO LEAKAGE:",
+        "5. STRICT TOOL CALL SYNTAX & ZERO LEAKAGE:",
         "   - When you need to call a tool, your ENTIRE output MUST be ONLY the `<tool_call>{\"name\": \"...\", \"arguments\": {...}}</tool_call>` block.",
         "   - NEVER write conversational commentary or introductory questions before or after the `<tool_call>` block in the same turn.",
         "",
@@ -638,18 +645,31 @@ class ToolCallOrchestrator:
                                 else:
                                     continue
 
-                            tool_indicators = ("<tool_call", "<function", "```json", '{"name"', '{"tool"', '{"function"')
-                            is_potential_prefix = any(
-                                ind.startswith(stripped_buf)
-                                for ind in tool_indicators
-                                if len(stripped_buf) < len(ind)
+                            dynamic_tool_names = tuple(t.name for t in self.registry.list_tools())
+                            tool_indicators = (
+                                "<tool_call",
+                                "<function",
+                                "<function_call",
+                                "```json",
+                                '{"name"',
+                                '{"tool"',
+                                '{"function"',
+                                '{"arguments"',
+                                '{"parameters"',
+                                *dynamic_tool_names,
                             )
-                            is_confirmed_tool = any(stripped_buf.startswith(ind) for ind in tool_indicators)
+                            is_potential_prefix = any(
+                                ind.startswith(stripped_buf) or stripped_buf.startswith(ind)
+                                for ind in tool_indicators
+                            )
+                            is_confirmed_tool = any(stripped_buf.startswith(ind) for ind in tool_indicators) or bool(
+                                re.search(r'["\']?(?:name|tool|function)["\']?\s*:', stripped_buf)
+                            )
 
                             if is_confirmed_tool:
                                 is_tool_call_detected = True
                                 decision_made = True
-                            elif not is_potential_prefix and (len(stripped_buf) >= 10 or "\n" in stripped_buf or any(ch.isalpha() for ch in stripped_buf[:4])):
+                            elif not is_potential_prefix and (len(stripped_buf) >= 15 or "\n" in stripped_buf):
                                 decision_made = True
                                 is_tool_call_detected = False
                                 clean_buf = strip_tool_call_markup(stream_buffer)
@@ -659,8 +679,10 @@ class ToolCallOrchestrator:
                                 stream_buffer = ""
                         else:
                             if not is_tool_call_detected:
-                                yield text_delta(event.delta)
-                                streamed_any = True
+                                clean_delta = strip_tool_call_markup(event.delta)
+                                if clean_delta:
+                                    yield text_delta(clean_delta)
+                                    streamed_any = True
 
             except Exception as stream_err:
                 logger.warning("Stream error in tool loop iteration %d: %s", iteration, stream_err)
