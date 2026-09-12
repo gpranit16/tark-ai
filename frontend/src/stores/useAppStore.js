@@ -86,7 +86,7 @@ export const useAppStore = create((set, get) => ({
   model: 'qwen/qwen3.8-27b',
   setModel: (model) => {
     let provider = 'groq';
-    if (model.startsWith('nvidia/') || model.includes('nemotron')) {
+    if (model.startsWith('nvidia/') || model.includes('nemotron') || model.startsWith('meta/llama-3.2')) {
       provider = 'nvidia';
     } else if (model.startsWith('gemini')) {
       provider = 'gemini';

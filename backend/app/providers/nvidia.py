@@ -86,7 +86,8 @@ class NvidiaProvider(AIProvider):
             "messages": msg_payload,
             "stream": True,
             "max_tokens": resolved_max_tokens,
-            "temperature": 0.2,
+            "temperature": 0.7,
+            "top_p": 0.9,
         }
 
         timeout_config = httpx.Timeout(self.timeout, connect=15.0, read=self.timeout)
@@ -145,7 +146,6 @@ class NvidiaProvider(AIProvider):
                                             tool_calls_acc[idx]["arguments"] += fn_args
 
                             if content_chunk:
-                                # Clean/filter think blocks from streamed output
                                 buffer += content_chunk
                                 while True:
                                     if not in_think_block:
@@ -155,8 +155,16 @@ class NvidiaProvider(AIProvider):
                                             buffer = after
                                             in_think_block = True
                                         else:
-                                            delta_text += buffer
-                                            buffer = ""
+                                            matched_prefix = False
+                                            for prefix_len in range(len("<think>") - 1, 0, -1):
+                                                if buffer.endswith("<think>"[:prefix_len]):
+                                                    delta_text += buffer[:-prefix_len]
+                                                    buffer = buffer[-prefix_len:]
+                                                    matched_prefix = True
+                                                    break
+                                            if not matched_prefix:
+                                                delta_text += buffer
+                                                buffer = ""
                                             break
                                     else:
                                         if "</think>" in buffer:
@@ -164,7 +172,14 @@ class NvidiaProvider(AIProvider):
                                             buffer = after
                                             in_think_block = False
                                         else:
-                                            buffer = ""
+                                            matched_prefix = False
+                                            for prefix_len in range(len("</think>") - 1, 0, -1):
+                                                if buffer.endswith("</think>"[:prefix_len]):
+                                                    buffer = buffer[-prefix_len:]
+                                                    matched_prefix = True
+                                                    break
+                                            if not matched_prefix:
+                                                buffer = ""
                                             break
 
                         usage = chunk.get("usage")

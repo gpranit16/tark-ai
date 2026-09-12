@@ -80,11 +80,11 @@ class ModelRouter:
     ) -> ProviderSelection:
         if provider:
             provider_name = self._provider_name(provider)
-        elif model and (model.startswith("nvidia") or "nemotron" in model.lower()):
+        elif model and (model.startswith("nvidia") or "nemotron" in model.lower() or model.startswith("deepseek") or model.startswith("meta/llama-3.2")):
             provider_name = ProviderName.NVIDIA
         elif model and model.startswith("gemini"):
             provider_name = ProviderName.GEMINI
-        elif model and model.startswith("mistral"):
+        elif model and model.startswith("mistral") and not "nemotron" in model:
             provider_name = ProviderName.MISTRAL
         else:
             provider_name = self._provider_for_mode(mode)
@@ -102,7 +102,7 @@ class ModelRouter:
                 selected_model = selected_provider.default_model
             elif provider_name == ProviderName.MISTRAL and not selected_model.startswith("mistral"):
                 selected_model = selected_provider.default_model
-            elif provider_name == ProviderName.NVIDIA and not (selected_model.startswith("nvidia") or "nemotron" in selected_model.lower()):
+            elif provider_name == ProviderName.NVIDIA and not (selected_model.startswith("nvidia") or "nemotron" in selected_model.lower() or selected_model.startswith("deepseek") or selected_model.startswith("meta/llama-3.2") or "mistral-nemotron" in selected_model):
                 selected_model = selected_provider.default_model
             elif provider_name == ProviderName.GROQ and selected_model in {"llama-3.3-70b-versatile", "llama-3.3-70b-specdec"}:
                 selected_model = self._model_for_mode(mode) or "qwen/qwen3.8-27b"

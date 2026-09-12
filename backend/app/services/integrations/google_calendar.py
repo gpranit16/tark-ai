@@ -470,6 +470,17 @@ class GoogleCalendarService:
             elif resp.status_code == 404:
                 logger.warning("Google Calendar event %s was already deleted or not found.", event_id)
                 return True
+            elif resp.status_code == 403:
+                err_body = resp.text
+                logger.error("Google Calendar delete event 403 Forbidden: %s", err_body)
+                raise RuntimeError(
+                    "Google Calendar returned 403 Forbidden: Insufficient permissions. "
+                    "Your Google account was connected with read-only access. "
+                    "Please disconnect and reconnect Google Calendar in Settings -> Connections to grant edit/delete permissions."
+                )
+            elif resp.status_code == 401:
+                logger.error("Google Calendar delete event 401 Unauthorized: token expired or invalid.")
+                raise RuntimeError("Google Calendar authorization token expired or invalid. Please re-authenticate.")
             else:
                 err_body = resp.text
                 logger.error("Google Calendar delete event error: %d %s", resp.status_code, err_body)

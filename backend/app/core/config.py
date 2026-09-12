@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     groq_api_key: str | None = Field(default=None, alias="GROQ_API_KEY")
     nvidia_api_key: str | None = Field(default=None, alias="NVIDIA_API_KEY")
     nvidia_base_url: str = Field(default="https://integrate.api.nvidia.com/v1", alias="NVIDIA_BASE_URL")
-    nvidia_model: str = Field(default="nvidia/nemotron-3.5-lightning-30b-a3b", alias="NVIDIA_MODEL")
+    nvidia_model: str = Field(default="meta/llama-3.2-11b-vision-instruct", alias="NVIDIA_MODEL")
     tavily_api_key: str | None = Field(default=None, alias="TAVILY_API_KEY")
     default_provider: str = Field(default="groq", alias="DEFAULT_PROVIDER")
     fast_provider: str = Field(default="groq", alias="FAST_PROVIDER")

@@ -486,6 +486,15 @@ class DeleteCalendarEventTool(BaseTool):
     permissions = [ToolPermission.USER_DATA, ToolPermission.NETWORK]
     category = "personal"
 
+    @staticmethod
+    def _normalize_title(text: str) -> str:
+        t = text.lower().strip()
+        t = re.sub(r"[^\w\s]", " ", t)
+        t = re.sub(r"^(remove|delete|cancel)\s+(the\s+)?(event|meeting|call)\s+(of|for|named|called)?\s*", "", t)
+        t = re.sub(r"^(event|meeting|call)\s+(of|for|named|called)?\s*", "", t)
+        t = re.sub(r"\s+(event|meeting|call)$", "", t)
+        return " ".join(t.split())
+
     async def execute(self, arguments: dict[str, Any], context: ToolExecutionContext) -> ToolResult:
         if not context.user_id or not context.session:
             return ToolResult(
@@ -494,9 +503,48 @@ class DeleteCalendarEventTool(BaseTool):
                 error="User authentication and database session required.",
             )
 
-        event_id = arguments.get("event_id")
-        title_query = str(arguments.get("title") or arguments.get("query") or arguments.get("name") or "").strip()
-        target_date_raw = arguments.get("target_date")
+        # Check integration and write permissions
+        if context.session:
+            try:
+                stmt = select(UserIntegration).where(
+                    UserIntegration.user_id == context.user_id,
+                    UserIntegration.provider == "google",
+                    UserIntegration.service == "calendar",
+                    UserIntegration.is_active == True,
+                )
+                res = await context.session.execute(stmt)
+                if hasattr(res, "scalars"):
+                    scalars_obj = res.scalars()
+                    integration = scalars_obj.first() if hasattr(scalars_obj, "first") else None
+                    if integration:
+                        scopes_list = integration.scopes if isinstance(integration.scopes, list) else [str(integration.scopes)]
+                        has_write = any("calendar.events" in s and "readonly" not in s for s in scopes_list)
+                        if not has_write:
+                            return ToolResult(
+                                tool_name=self.name,
+                                success=False,
+                                error=(
+                                    "Google Calendar write permission is required to delete events. "
+                                    "Your current connection only has read permissions. "
+                                    "Please disconnect and reconnect Google Calendar in Settings -> Connections to grant edit/delete access."
+                                ),
+                            )
+            except Exception as e:
+                logger.debug("Could not verify integration write permissions in tool: %s", e)
+
+        event_id = arguments.get("event_id") or arguments.get("eventId") or arguments.get("id")
+        title_query = str(
+            arguments.get("title")
+            or arguments.get("summary")
+            or arguments.get("event_title")
+            or arguments.get("event_name")
+            or arguments.get("event")
+            or arguments.get("name")
+            or arguments.get("query")
+            or arguments.get("target")
+            or ""
+        ).strip()
+        target_date_raw = arguments.get("target_date") or arguments.get("date")
 
         service = GoogleCalendarService()
 
@@ -511,8 +559,8 @@ class DeleteCalendarEventTool(BaseTool):
                     )
 
                 now = datetime.now(timezone.utc)
-                time_min = now - timedelta(days=1)
-                time_max = now + timedelta(days=30)
+                time_min = now - timedelta(days=7)
+                time_max = now + timedelta(days=60)
 
                 if target_date_raw:
                     target_str = str(target_date_raw).lower()
@@ -530,23 +578,50 @@ class DeleteCalendarEventTool(BaseTool):
                     session=context.session,
                     time_min=time_min,
                     time_max=time_max,
-                    max_results=30,
+                    max_results=50,
                 )
 
-                # Case-insensitive substring match
+                clean_query = self._normalize_title(title_query)
+                query_words = set(clean_query.split())
+
                 matching_event = None
-                clean_query = title_query.lower()
+
+                # Pass 1: exact normalized match
                 for ev in events:
-                    ev_summary = (ev.get("summary") or "").lower()
-                    if clean_query in ev_summary or ev_summary in clean_query:
+                    norm_summary = self._normalize_title(ev.get("summary") or "")
+                    if norm_summary and norm_summary == clean_query:
                         matching_event = ev
                         break
+
+                # Pass 2: substring match
+                if not matching_event:
+                    for ev in events:
+                        norm_summary = self._normalize_title(ev.get("summary") or "")
+                        raw_summary = (ev.get("summary") or "").lower()
+                        if (clean_query and clean_query in norm_summary) or (norm_summary and norm_summary in clean_query):
+                            matching_event = ev
+                            break
+                        if title_query.lower() in raw_summary or raw_summary in title_query.lower():
+                            matching_event = ev
+                            break
+
+                # Pass 3: Token subset match
+                if not matching_event and query_words:
+                    for ev in events:
+                        norm_summary = self._normalize_title(ev.get("summary") or "")
+                        summary_words = set(norm_summary.split())
+                        if summary_words and summary_words.issubset(query_words):
+                            matching_event = ev
+                            break
+                        if query_words and query_words.issubset(summary_words):
+                            matching_event = ev
+                            break
 
                 if not matching_event:
                     return ToolResult(
                         tool_name=self.name,
                         success=False,
-                        error=f"No calendar event found matching '{title_query}' in your upcoming schedule.",
+                        error=f"No calendar event found matching '{title_query}' in your schedule.",
                     )
 
                 event_id = matching_event.get("id")

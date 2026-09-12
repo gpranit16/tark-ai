@@ -52,7 +52,7 @@ class KnowledgeSearchTool(BaseTool):
 
             formatted_results = [
                 {
-                    "file_name": r.file_name,
+                    "file_name": getattr(r, "file_name", None) or (r.metadata.get("filename") if r.metadata else None) or (r.metadata.get("file_name") if r.metadata else None) or "document",
                     "content": r.content,
                     "chunk_index": r.chunk_index,
                     "similarity_score": round(r.similarity_score, 4),

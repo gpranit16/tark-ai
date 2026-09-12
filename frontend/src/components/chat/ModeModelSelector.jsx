@@ -73,10 +73,17 @@ const MODELS = [
     icon: Cpu,
   },
   {
-    id: 'nvidia/nemotron-3.5-lightning-30b-a3b',
-    name: 'Nemotron 3.5 Lightning',
-    badge: 'NVIDIA',
+    id: 'meta/llama-3.2-11b-vision-instruct',
+    name: 'Llama 3.2 11B',
+    badge: 'NVIDIA Instant (0.7s)',
     badgeColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+    icon: Zap,
+  },
+  {
+    id: 'nvidia/nemotron-3.5-lightning-30b-a3b',
+    name: 'Nemotron 3.5',
+    badge: 'NVIDIA 30B',
+    badgeColor: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
     icon: Sparkles,
   },
   {

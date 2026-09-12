@@ -26,8 +26,9 @@ class MemorySearchInput(BaseModel):
 class MemorySearchTool(BaseTool):
     name: str = "search_user_memory"
     description: str = (
-        "Search stored long-term memory facts, personal preferences, user background, profile details, and custom instructions. "
-        "Use this whenever the user asks 'what do you remember about me?', 'what are my preferences?', or when context about user's skills/goals is needed."
+        "Search stored long-term memory facts, persistent preferences, and user background from PREVIOUS past sessions. "
+        "DO NOT use this tool if the fact or topic was already stated in the CURRENT ongoing conversation thread. "
+        "Use this only when the fact is absent from the current thread and refers to persistent historical profile info."
     )
     permission: ToolPermission = ToolPermission.USER_DATA
     input_schema: Type[BaseModel] = MemorySearchInput
