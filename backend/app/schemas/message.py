@@ -17,18 +17,18 @@ class MessageCreate(BaseModel):
 class MessageResponse(BaseModel):
     id: UUID
     thread_id: UUID
-    parent_message_id: UUID | None
-    role: MessageRole
+    parent_message_id: UUID | None = None
+    role: str | MessageRole
     content: str
-    model: str | None
-    provider: str | None
-    mode: ConversationMode
-    generation_status: str | None
+    model: str | None = None
+    provider: str | None = None
+    mode: str | ConversationMode = ConversationMode.NORMAL
+    generation_status: str | None = None
     attachments: list[dict] | None = None
-    input_tokens: int | None
-    output_tokens: int | None
-    total_tokens: int | None
-    latency_ms: int | None
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    total_tokens: int | None = None
+    latency_ms: int | None = None
     created_at: datetime
     updated_at: datetime
 

@@ -17,39 +17,54 @@
 
 **TARK AI** is an enterprise-grade AI intelligence platform and autonomous personal operating system (Personal OS). Engineered with an obsidian and champagne gold aesthetic, TARK AI unifies:
 
-- **Personal OS & Daily Hub**: Real-time daily briefing, AI Daily Plan generation, 2-way Google Calendar synchronization, and audio reminder alerts.
-- **Smart Tasks & Habit Planning**: Conversational natural language task creation, category filtering, priority scheduling, and background alert daemons.
-- **Universal Knowledge Base**: Multi-format document ingestion (PDF, Word DOCX, PowerPoint PPTX, Excel XLSX, Scanned Images via RapidOCR ONNX) with dual-tier storage (Local + Backblaze B2).
+- **Main Intelligence Workspace**: Low-latency SSE chat streaming powered by Groq LPUs, multimodal vision, prompt cards, and live tool execution.
+- **Interactive Companion Mascot**: Real-time 2D cursor tracking companion with automatic password privacy shielding.
+- **Personal OS & "My Space"**: Daily intelligence pulse, AI Daily Plan generation, 2-way Google Calendar synchronization, and audio reminder alerts.
+- **Smart Tasks & Habit Planning**: Conversational natural language task creation, category taxonomies, priority scheduling, and background alert daemons.
+- **Universal Knowledge Base**: Multi-format document extraction (PDF, Word DOCX, PowerPoint PPTX, Excel XLSX, Images via RapidOCR ONNX) with dual-tier storage (Local + Backblaze B2).
 - **Corrective RAG (CRAG)**: Hybrid dense vector (`BAAI/bge-m3`) and lexical search with cross-encoder reranking (`bge-reranker-v2-m3`).
 - **Contextual Long-Term Memory**: Automatic semantic extraction of facts, preferences, and project context with confidence weighting.
-- **High-Speed Inference**: Sub-150ms SSE streaming powered by Groq LPUs, NVIDIA Vision, Gemini, and Mistral.
 
 ---
 
 ## 2. Application Showcase
 
-### 🌟 1. Personal OS & "My Space"
-> Central command dashboard featuring real-time calendar synchronization, AI-generated daily schedules, upcoming reminder alerts, and productivity metrics.
+### 🌟 1. Main Intelligence Workspace & Multi-Model Chat
+> Low-latency SSE streaming workspace with intelligent prompt suggestion cards, model switching (`qwen3.8-27b`, `gpt-oss-120b`, `llama-3.3-70b`), private B2 cloud storage toggling, and 3D companion mascot integration.
+
+![Main Intelligence Workspace](assets/screenshots/chat_workspace.png)
+
+---
+
+### 🤖 2. Authentication & Interactive Companion Mascot
+> Secure JWT authentication featuring an interactive companion robot that tracks cursor movement in real time and automatically shields its eyes for password privacy.
+
+![Sign In & Mascot](assets/screenshots/auth_login.png)
+
+---
+
+### 📅 3. Personal OS & "My Space"
+> Central command dashboard featuring real-time Google Calendar synchronization, AI-generated daily schedules, upcoming reminder alerts, and productivity metrics.
 
 ![My Space Dashboard](assets/screenshots/myspace_dashboard.png)
 
 ---
 
-### 📋 2. Tasks & Smart Planning
+### 📋 4. Tasks & Smart Planning
 > Conversational task creation with category tags (*Finance, Health, Personal, Projects, Study, Work*), priority management, and smart filter views (*Today, Upcoming, Overdue, Completed, AI Daily Plan*).
 
 ![Tasks and Smart Planning](assets/screenshots/tasks_planning.png)
 
 ---
 
-### 📚 3. Universal Knowledge Base
+### 📚 5. Universal Knowledge Base
 > Ingest and search documents across formats (PDF, DOCX, PPTX, XLSX, Images via RapidOCR ONNX) backed by PostgreSQL `pgvector` and private Backblaze B2 cloud storage.
 
 ![Knowledge Base](assets/screenshots/knowledge_hub.png)
 
 ---
 
-### 🧠 4. Personal Memory & Context Console
+### 🧠 6. Personal Memory & Context Console
 > Intelligent long-term semantic memory that extracts durable facts and preferences with confidence scoring, importance weights, and user controls.
 
 ![Personal Memory Console](assets/screenshots/memory_console.png)
@@ -57,6 +72,15 @@
 ---
 
 ## 3. Core Features
+
+### 💬 Intelligence Workspace & Chat
+- **Ultra-Fast Streaming**: Groq LPU acceleration delivering 150–250 tokens/second with under 150ms latency.
+- **Multi-Model Routing**: Switch dynamically between Fast, Normal, Reasoning, RAG, and Deep Research modes.
+- **Context & Citations**: Real-time RAG document citations, web search verification, and execution pills.
+
+### 🤖 Interactive Companion Mascot
+- **Real-Time 2D Gaze Tracking**: Interactive companion tracks cursor position across the screen.
+- **Privacy Shielding**: Mascot automatically covers its eyes when the user types in password inputs.
 
 ### 🌟 Personal OS ("My Space")
 - **AI Daily Plan**: Optimizes daily routines, meetings, and prioritized tasks into an actionable hourly schedule.
@@ -88,12 +112,6 @@
 - **Scoped Injection**: Injects relevant memories into active prompts without cross-workspace leakage.
 - **User Controls**: Edit, disable, search, or delete stored memories directly from the console.
 
-### ⚡ Multi-Model Intelligence & Tools
-- **Groq LPU Inference**: High-throughput streaming (`qwen-2.5-72b`, `gpt-oss-120b`, `llama-3.3-70b`).
-- **NVIDIA NIM Vision**: Multimodal image inspection and document understanding.
-- **Autonomous Tools**: DuckDuckGo / Tavily Web Search, Yahoo Finance stock quotes, OpenMeteo weather forecasts, and currency conversion.
-- **LangSmith Tracing**: Full execution observability for token metrics, tool calls, and RAG evaluation.
-
 ---
 
 ## 4. System Architecture
@@ -107,7 +125,7 @@ graph TD
     classDef cloud fill:#1A0F1F,stroke:#A855F7,stroke-width:2px,color:#E9D5FF;
     classDef ext fill:#1B0E0E,stroke:#F43F5E,stroke-width:2px,color:#FDA4AF;
 
-    A["🖥️ Frontend Client<br/>(React 19 + Vite + Tailwind)"]:::client
+    A["🖥️ Frontend Client<br/>(React 19 + Vite + Tailwind + Framer Motion)"]:::client
     B["⚙️ API Gateway & Auth<br/>(FastAPI + JWT Auth)"]:::gateway
     C["🧠 Neural Router & Providers<br/>(Groq, NVIDIA Vision, Gemini, Mistral)"]:::router
     D["🎯 CRAG & Retrieval Engine<br/>(BGE-M3 Embeddings + BGE Reranker v2)"]:::router
@@ -144,14 +162,13 @@ graph TD
 | **OCR Ingestion** | RapidOCR ONNX | Scanned image and document text parsing |
 | **Cloud Storage** | Backblaze B2 (S3-compatible) | Secure, private object storage |
 | **Calendar Sync** | Google Calendar API (OAuth2) | Two-way agenda synchronization |
-| **Observability** | LangSmith (`LANGCHAIN_TRACING_V2`) | End-to-end LLM and agent execution tracing |
 | **Email Service** | Resend API | Transactional account emails |
 
 ---
 
 ## 6. Local Setup Guide
 
-### 1. Clone the Repository
+### 1. Clone Repository
 ```bash
 git clone https://github.com/gpranit16/tark-ai.git
 cd tark-ai
@@ -168,17 +185,11 @@ cd backend
 
 # Create virtual environment
 python -m venv .venv
+.\.venv\Scripts\Activate.ps1  # On Windows
+# source .venv/bin/activate   # On macOS/Linux
 
-# Activate virtual environment
-# Windows:
-.\.venv\Scripts\Activate.ps1
-# macOS/Linux:
-source .venv/bin/activate
-
-# Install dependencies
+# Install dependencies & run migrations
 pip install -r requirements.txt
-
-# Run migrations
 alembic upgrade head
 
 # Start FastAPI server
@@ -188,11 +199,7 @@ uvicorn app.main:app --reload --port 8001
 ### 4. Setup and Run Frontend
 ```bash
 cd ../frontend
-
-# Install dependencies
 npm install
-
-# Start Vite dev server
 npm run dev
 ```
 
@@ -200,79 +207,6 @@ Open **`http://localhost:5173`** in your browser.
 
 ---
 
-## 7. Environment Configuration
-
-### Backend (`backend/.env`)
-```env
-APP_ENV=development
-DATABASE_URL=postgresql+asyncpg://tarkai:change-me@127.0.0.1:5433/tarkai
-JWT_SECRET_KEY=your-secure-64-character-jwt-secret-key-here
-FRONTEND_URL=http://localhost:5173
-CORS_ORIGINS=http://localhost:5173
-
-# LLM Providers
-DEFAULT_PROVIDER=groq
-GROQ_API_KEY=your_groq_api_key
-GEMINI_API_KEY=your_gemini_api_key
-MISTRAL_API_KEY=your_mistral_api_key
-
-# NVIDIA Vision
-NVIDIA_API_KEY=your_nvidia_api_key
-NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
-NVIDIA_MODEL=meta/llama-3.2-11b-vision-instruct
-
-# Search & Tools
-TAVILY_API_KEY=your_tavily_key
-
-# Google Calendar Integration
-GOOGLE_CLIENT_ID=your_google_client_id.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=your_google_client_secret
-GOOGLE_REDIRECT_URI=http://localhost:8001/api/v1/integrations/google/calendar/callback
-
-# LangSmith Observability
-LANGCHAIN_TRACING_V2=true
-LANGCHAIN_API_KEY=your_langsmith_key
-LANGCHAIN_PROJECT=tark-ai
-
-# Storage (local or b2)
-STORAGE_PROVIDER=b2
-B2_KEY_ID=your_b2_key_id
-B2_APPLICATION_KEY=your_b2_app_key
-B2_BUCKET_NAME=tarkai-files
-B2_ENDPOINT=https://s3.us-east-005.backblazeb2.com
-
-# Email (Resend)
-RESEND_API_KEY=your_resend_api_key
-RESEND_FROM_EMAIL=onboarding@resend.dev
-```
-
-### Frontend (`frontend/.env`)
-```env
-VITE_API_BASE_URL=http://127.0.0.1:8001
-```
-
----
-
-## 8. API Reference Summary
-
-| Group | Method | Endpoint | Description |
-| :--- | :--- | :--- | :--- |
-| **Auth** | `POST` | `/api/v1/auth/signup` | Register new user |
-| **Auth** | `POST` | `/api/v1/auth/login` | Authenticate and return JWT tokens |
-| **Tasks** | `GET` | `/api/v1/tasks` | List tasks by category, status, and date |
-| **Tasks** | `POST` | `/api/v1/tasks` | Create task with priority and reminder |
-| **Tasks** | `GET` | `/api/v1/tasks/summary` | Get aggregated task counts and metrics |
-| **Tasks** | `POST` | `/api/v1/tasks/daily-plan` | Generate AI daily plan from tasks & calendar |
-| **Calendar** | `GET` | `/api/v1/integrations/google/calendar/auth-url` | Get Google OAuth2 authorization URL |
-| **Calendar** | `GET` | `/api/v1/integrations/google/calendar/events` | Fetch live Google Calendar events |
-| **Chat** | `POST` | `/api/v1/threads/{id}/chat` | SSE streaming chat with tool execution |
-| **Knowledge**| `POST` | `/api/v1/files/upload` | Upload & OCR process document |
-| **Knowledge**| `GET` | `/api/v1/files/stats` | Storage breakdown (Local vs B2, total size) |
-| **Memory** | `GET` | `/api/v1/memory` | Retrieve extracted semantic memory entities |
-| **Tools** | `POST` | `/api/v1/tools/execute` | Execute tool with JSON parameters |
-
----
-
-## 9. License
+## 7. License
 
 Distributed under the **MIT License**. See `LICENSE` for details.

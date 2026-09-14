@@ -40,17 +40,17 @@ class ThreadMoveRequest(BaseModel):
 class ThreadResponse(BaseModel):
     id: UUID
     user_id: UUID
-    project_id: UUID | None
-    title: str | None
-    default_mode: ConversationMode
+    project_id: UUID | None = None
+    title: str | None = None
+    default_mode: str | ConversationMode = ConversationMode.NORMAL
     summary: str | None = None
     summary_updated_at: datetime | None = None
-    is_temporary: bool = False
-    is_pinned: bool = False
-    is_archived: bool = False
-    sort_order: int = 0
+    is_temporary: bool | None = False
+    is_pinned: bool | None = False
+    is_archived: bool | None = False
+    sort_order: int | None = 0
     created_at: datetime
     updated_at: datetime
-    archived_at: datetime | None
+    archived_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)

@@ -68,8 +68,8 @@ async def list_threads(
     stmt: Select[tuple[Thread]] = (
         select(Thread)
         .order_by(
-            Thread.is_pinned.desc(),
-            Thread.sort_order.desc(),
+            Thread.is_pinned.desc().nullslast(),
+            Thread.sort_order.desc().nullslast(),
             Thread.updated_at.desc(),
             Thread.created_at.desc(),
         )
