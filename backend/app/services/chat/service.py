@@ -1,3 +1,4 @@
+import asyncio
 import json
 import time
 from collections.abc import AsyncIterator
@@ -319,9 +320,7 @@ class ChatService:
                         threshold=self.settings.thread_summary_threshold,
                     )
                 except Exception:
-                    # Non-blocking background memory extraction failure
                     pass
-
 
             yield message_complete(
                 MessageCompletePayload(
@@ -333,6 +332,7 @@ class ChatService:
                     fallback_used=latest_selection.fallback_used,
                 )
             )
+
         except ProviderError as exc:
             if latest_selection is not None:
                 await self._persist_assistant(

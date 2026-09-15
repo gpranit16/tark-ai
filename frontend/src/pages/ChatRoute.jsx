@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo, memo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
@@ -28,6 +28,112 @@ import VoiceModeModal from '../components/chat/VoiceModeModal';
 import { useVoiceSession } from '../hooks/useVoiceSession';
 
 const DEV_USER_ID = '00000000-0000-0000-0000-000000000001';
+
+const MessageBubble = memo(function MessageBubble({
+  msg, compactMessages, chatDensity, showAttachmentPreviews, showTimestamps,
+  showCitationsSetting, userId, renderContentFn,
+}) {
+  return (
+    <div className={clsx('flex gap-3 w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
+      {msg.role === 'assistant' && (
+        <TarkAssistantAvatar size={40} className="mt-0.5" />
+      )}
+      <div className={clsx(
+        'max-w-[85%] rounded-2xl text-sm',
+        compactMessages ? 'px-3 py-2 text-xs' : chatDensity === 'spacious' ? 'px-5 py-4' : 'px-4 py-3',
+        msg.role === 'user' ? 'bg-[#141415] border border-white/[0.06] text-[#F4F2ED]' : 'bg-transparent text-[#F4F2ED]'
+      )}>
+        {/* Attached Files / Screenshots in User Message */}
+        {showAttachmentPreviews && msg.attachments && msg.attachments.length > 0 && (
+          <div className="mb-3 flex flex-wrap gap-2.5">
+            {msg.attachments.map((att, i) => {
+              const isImg =
+                (att.mime_type && att.mime_type.startsWith('image/')) ||
+                /\.(png|jpe?g|webp|gif)$/i.test(att.filename || '');
+              const fileUrl = fileApi.getFileContentUrl(att.file_id || att.id, userId);
+              return isImg ? (
+                <a
+                  key={att.file_id || att.id || i}
+                  href={fileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="group relative block overflow-hidden rounded-xl border border-white/[0.08] bg-black/40 hover:border-accent transition-all max-w-[280px] shadow-md"
+                  title="Click to view full image"
+                >
+                  <img
+                    src={fileUrl}
+                    alt={att.filename || 'attachment'}
+                    className="max-h-56 w-auto rounded-lg object-contain bg-black/30 mx-auto"
+                    loading="lazy"
+                  />
+                  {att.filename && (
+                    <div className="px-2.5 py-1 text-[10px] text-[#A0A0A0] truncate bg-[#141415]/95 border-t border-white/[0.06] font-mono">
+                      {att.filename}
+                    </div>
+                  )}
+                </a>
+              ) : (
+                <a
+                  key={att.file_id || att.id || i}
+                  href={fileUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#141415] border border-white/[0.08] text-xs text-[#F4F2ED] hover:border-accent transition-all"
+                  title="Open attachment"
+                >
+                  <FileText size={14} className="text-accent shrink-0" />
+                  <span className="truncate max-w-[180px]">{att.filename || 'Document'}</span>
+                </a>
+              );
+            })}
+          </div>
+        )}
+
+        {renderContentFn(msg.content)}
+
+        {/* Message Timestamps */}
+        {showTimestamps && msg.created_at && (
+          <div className={clsx("text-[10px] text-[#767676] mt-1.5", msg.role === 'user' ? 'text-right' : 'text-left')}>
+            {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+          </div>
+        )}
+
+        {/* Research Citations */}
+        {showCitationsSetting && msg.research_citations && msg.research_citations.length > 0 && (
+          <ResearchCitations citations={msg.research_citations} />
+        )}
+        {/* RAG Citations */}
+        {showCitationsSetting && msg.citations && msg.citations.length > 0 && (!msg.research_citations || msg.research_citations.length === 0) && (
+          <div className="mt-3 pt-2 border-t border-white/[0.06] space-y-1">
+            <div className="text-[10px] font-semibold text-[#A0A0A0] uppercase tracking-wider mb-1">Sources</div>
+            {msg.citations.map((cit, ci) => (
+              <div key={cit.chunk_id || ci} className="flex items-start gap-1.5 text-[11px] text-[#A0A0A0]">
+                <span className="text-accent shrink-0">▸</span>
+                <span><span className="text-[#F4F2ED]">{cit.filename}</span> · p.{cit.page_number} · {Math.round((cit.similarity_score || 0) * 100)}%</span>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* CRAG Debug / Pipeline Observability Panel */}
+        {msg.ragMeta && (
+          <CRAGDebugPanel ragMeta={msg.ragMeta} latency={msg.ragMeta?.latency} />
+        )}
+      </div>
+      {msg.role === 'user' && (
+        <div className="w-7 h-7 rounded-full bg-[#141415] border border-white/[0.08] text-[#A0A0A0] flex items-center justify-center text-xs font-bold shrink-0 mt-1">U</div>
+      )}
+    </div>
+  );
+}, (prev, next) => (
+  prev.msg.id === next.msg.id &&
+  prev.msg.content === next.msg.content &&
+  prev.compactMessages === next.compactMessages &&
+  prev.chatDensity === next.chatDensity &&
+  prev.showTimestamps === next.showTimestamps &&
+  prev.showCitationsSetting === next.showCitationsSetting &&
+  prev.showAttachmentPreviews === next.showAttachmentPreviews
+));
 
 export default function ChatRoute() {
   const { threadId } = useParams();
@@ -98,7 +204,18 @@ export default function ChatRoute() {
   const [isTemporaryChat, setIsTemporaryChat] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const streamingContentRef = useRef('');
+  const streamingRafRef = useRef(null);
   const [streamingDisplay, setStreamingDisplay] = useState(null);
+  const isStreamingActive = streamingDisplay !== null;
+  const isNewChat = !threadId && localMessages.length === 0 && !isStreamingActive;
+
+  useEffect(() => {
+    return () => {
+      if (streamingRafRef.current) {
+        cancelAnimationFrame(streamingRafRef.current);
+      }
+    };
+  }, []);
   const [uploadedFiles, setUploadedFiles] = useState([]);
   const [isUploadingAttachment, setIsUploadingAttachment] = useState(false);
   const [pasteError, setPasteError] = useState(null);
@@ -263,7 +380,7 @@ export default function ChatRoute() {
     queryKey: ['messages', threadId],
     queryFn: () => threadApi.getMessages(threadId),
     enabled: !!threadId,
-    staleTime: 0,
+    staleTime: 30_000,   // Don't refetch messages on every focus — they only change when we send
     retry: (failureCount, error) => {
       if (error?.message?.includes('404')) return false;
       return failureCount < 1;
@@ -302,11 +419,13 @@ export default function ChatRoute() {
     prevThreadIdRef.current = threadId;
   }, [threadId]);
 
-  // Auto-scroll
+  // Auto-scroll: use 'instant' during active streaming to avoid layout thrash from
+  // smooth scroll animations running on every RAF tick. Use 'smooth' only for
+  // new-message arrival (length change) when not streaming.
   useEffect(() => {
-    if (autoScrollSetting) {
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }
+    if (!autoScrollSetting) return;
+    const behavior = isStreaming ? 'instant' : 'smooth';
+    messagesEndRef.current?.scrollIntoView({ behavior });
   }, [localMessages.length, isStreaming, autoScrollSetting]);
 
   const handleInput = (e) => {
@@ -428,14 +547,27 @@ export default function ChatRoute() {
 
     await streamChat(activeThreadId, payload, {
       onMessageStart: () => {
+        if (streamingRafRef.current) {
+          cancelAnimationFrame(streamingRafRef.current);
+          streamingRafRef.current = null;
+        }
         streamingContentRef.current = '';
         setStreamingDisplay('');
       },
       onTextDelta: (data) => {
         streamingContentRef.current += data.delta ?? '';
-        setStreamingDisplay(streamingContentRef.current);
+        if (!streamingRafRef.current) {
+          streamingRafRef.current = requestAnimationFrame(() => {
+            setStreamingDisplay(streamingContentRef.current);
+            streamingRafRef.current = null;
+          });
+        }
       },
       onMessageComplete: (data) => {
+        if (streamingRafRef.current) {
+          cancelAnimationFrame(streamingRafRef.current);
+          streamingRafRef.current = null;
+        }
         const finalContent = streamingContentRef.current;
         const citations = pendingCitationsRef.current || [];
         // Update RAG metadata from message_complete event if available
@@ -599,7 +731,10 @@ export default function ChatRoute() {
         queryClient.invalidateQueries({ queryKey: ['memories'] });
       },
       onError: (err) => {
-
+        if (streamingRafRef.current) {
+          cancelAnimationFrame(streamingRafRef.current);
+          streamingRafRef.current = null;
+        }
         console.error('[ChatRoute] SSE error:', err);
         setIsResearching(false);
         setIsCoding(false);
@@ -641,8 +776,10 @@ export default function ChatRoute() {
     setIsVoiceModeOpen(true);
   };
 
-  const renderContent = (content) => {
+
+  const renderContent = useCallback((content) => {
     if (!content) return null;
+
     
     // Check for <think>...</think> or unclosed <think>... (during streaming)
     let thinkingText = null;
@@ -672,7 +809,8 @@ export default function ChatRoute() {
         {mainText ? (
           <div className="prose prose-invert max-w-none text-sm leading-relaxed
             prose-p:my-1.5 prose-headings:text-[#F4F2ED] prose-strong:text-[#F4F2ED]
-            prose-a:text-accent prose-hr:border-white/10 prose-ul:my-2 prose-li:my-0.5">
+            prose-a:text-accent prose-hr:border-white/10 prose-ul:my-2 prose-li:my-0.5
+            [letter-spacing:normal] [word-spacing:normal]">
             <ReactMarkdown
               remarkPlugins={[remarkGfm]}
               rehypePlugins={[rehypeHighlight]}
@@ -739,10 +877,7 @@ export default function ChatRoute() {
         ) : null}
       </div>
     );
-  };
-
-  const isStreamingActive = streamingDisplay !== null;
-  const isNewChat = !threadId && localMessages.length === 0 && !isStreamingActive;
+  }, [isStreamingActive]);
 
   return (
     <div className="flex flex-col h-full bg-background relative overflow-hidden">
@@ -977,96 +1112,17 @@ export default function ChatRoute() {
             )}
 
             {localMessages.map((msg, idx) => (
-              <div key={msg.id || idx} className={clsx('flex gap-3 w-full', msg.role === 'user' ? 'justify-end' : 'justify-start')}>
-                {msg.role === 'assistant' && (
-                  <TarkAssistantAvatar size={40} className="mt-0.5" />
-                )}
-                <div className={clsx(
-                  'max-w-[85%] rounded-2xl text-sm',
-                  compactMessages ? 'px-3 py-2 text-xs' : chatDensity === 'spacious' ? 'px-5 py-4' : 'px-4 py-3',
-                  msg.role === 'user' ? 'bg-[#141415] border border-white/[0.06] text-[#F4F2ED]' : 'bg-transparent text-[#F4F2ED]'
-                )}>
-                  {/* Attached Files / Screenshots in User Message */}
-                  {showAttachmentPreviews && msg.attachments && msg.attachments.length > 0 && (
-                    <div className="mb-3 flex flex-wrap gap-2.5">
-                      {msg.attachments.map((att, i) => {
-                        const isImg =
-                          (att.mime_type && att.mime_type.startsWith('image/')) ||
-                          /\.(png|jpe?g|webp|gif)$/i.test(att.filename || '');
-                        const fileUrl = fileApi.getFileContentUrl(att.file_id || att.id, user?.id || DEV_USER_ID);
-                        return isImg ? (
-                          <a
-                            key={att.file_id || att.id || i}
-                            href={fileUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="group relative block overflow-hidden rounded-xl border border-white/[0.08] bg-black/40 hover:border-accent transition-all max-w-[280px] shadow-md"
-                            title="Click to view full image"
-                          >
-                            <img
-                              src={fileUrl}
-                              alt={att.filename || 'attachment'}
-                              className="max-h-56 w-auto rounded-lg object-contain bg-black/30 mx-auto"
-                              loading="lazy"
-                            />
-                            {att.filename && (
-                              <div className="px-2.5 py-1 text-[10px] text-[#A0A0A0] truncate bg-[#141415]/95 border-t border-white/[0.06] font-mono">
-                                {att.filename}
-                              </div>
-                            )}
-                          </a>
-                        ) : (
-                          <a
-                            key={att.file_id || att.id || i}
-                            href={fileUrl}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#141415] border border-white/[0.08] text-xs text-[#F4F2ED] hover:border-accent transition-all"
-                            title="Open attachment"
-                          >
-                            <FileText size={14} className="text-accent shrink-0" />
-                            <span className="truncate max-w-[180px]">{att.filename || 'Document'}</span>
-                          </a>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {renderContent(msg.content)}
-
-                  {/* Message Timestamps */}
-                  {showTimestamps && msg.created_at && (
-                    <div className={clsx("text-[10px] text-[#767676] mt-1.5", msg.role === 'user' ? 'text-right' : 'text-left')}>
-                      {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </div>
-                  )}
-
-                  {/* Research Citations */}
-                  {showCitationsSetting && msg.research_citations && msg.research_citations.length > 0 && (
-                    <ResearchCitations citations={msg.research_citations} />
-                  )}
-                  {/* RAG Citations */}
-                  {showCitationsSetting && msg.citations && msg.citations.length > 0 && (!msg.research_citations || msg.research_citations.length === 0) && (
-                    <div className="mt-3 pt-2 border-t border-white/[0.06] space-y-1">
-                      <div className="text-[10px] font-semibold text-[#A0A0A0] uppercase tracking-wider mb-1">Sources</div>
-                      {msg.citations.map((cit, ci) => (
-                        <div key={cit.chunk_id || ci} className="flex items-start gap-1.5 text-[11px] text-[#A0A0A0]">
-                          <span className="text-accent shrink-0">▸</span>
-                          <span><span className="text-[#F4F2ED]">{cit.filename}</span> · p.{cit.page_number} · {Math.round((cit.similarity_score || 0) * 100)}%</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* CRAG Debug / Pipeline Observability Panel */}
-                  {msg.ragMeta && (
-                    <CRAGDebugPanel ragMeta={msg.ragMeta} latency={msg.ragMeta?.latency} />
-                  )}
-                </div>
-                {msg.role === 'user' && (
-                  <div className="w-7 h-7 rounded-full bg-[#141415] border border-white/[0.08] text-[#A0A0A0] flex items-center justify-center text-xs font-bold shrink-0 mt-1">U</div>
-                )}
-              </div>
+              <MessageBubble
+                key={msg.id || idx}
+                msg={msg}
+                compactMessages={compactMessages}
+                chatDensity={chatDensity}
+                showAttachmentPreviews={showAttachmentPreviews}
+                showTimestamps={showTimestamps}
+                showCitationsSetting={showCitationsSetting}
+                userId={user?.id || DEV_USER_ID}
+                renderContentFn={renderContent}
+              />
             ))}
 
             {/* Live streaming bubble */}

@@ -95,6 +95,8 @@ class ModelRouter:
 
         if fallback_used:
             selected_model = selected_provider.default_model
+        elif provider and not model:
+            selected_model = selected_provider.default_model
         else:
             configured_model = model or self._model_for_mode(mode) or selected_provider.default_model
             selected_model = (configured_model or selected_provider.default_model).strip()

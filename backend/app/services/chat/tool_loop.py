@@ -422,7 +422,7 @@ def parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
     return calls
 
 
-def strip_think_markup(text: str) -> str:
+def strip_think_markup(text: str, strip_whitespace: bool = False) -> str:
     """Remove <think>...</think> reasoning blocks, markdown thinking headers, and internal reasoning from output."""
     cleaned = re.sub(r"<think>[\s\S]*?(?:</think>|\Z)", "", text, flags=re.IGNORECASE)
     cleaned = re.sub(
@@ -430,16 +430,16 @@ def strip_think_markup(text: str) -> str:
         "",
         cleaned,
     )
-    return cleaned.strip()
+    return cleaned.strip() if strip_whitespace else cleaned
 
 
-def strip_tool_call_markup(text: str) -> str:
+def strip_tool_call_markup(text: str, strip_whitespace: bool = False) -> str:
     """Remove all tool call markup, XML tags, bare tool JSONs, and thinking tags so only clean response remains."""
     cleaned = re.sub(r"<tool_call>[\s\S]*?(?:</tool_call>|(?=<tool_call>)|\Z)", "", text, flags=re.IGNORECASE)
     cleaned = re.sub(r"<function_call>[\s\S]*?(?:</function_call>|(?=<function_call>)|\Z)", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"<function=[^>]+>[\s\S]*?(?:</function>|(?=<function=)|\Z)", "", cleaned, flags=re.IGNORECASE)
     cleaned = JSON_CODEBLOCK_TOOL_REGEX.sub("", cleaned)
-    cleaned = strip_think_markup(cleaned)
+    cleaned = strip_think_markup(cleaned, strip_whitespace=strip_whitespace)
 
     # Strip any bare tool call JSON blocks with balanced braces
     start_indices = [i for i, ch in enumerate(cleaned) if ch == "{"]
@@ -476,8 +476,55 @@ def strip_tool_call_markup(text: str) -> str:
                         break
 
     cleaned = re.sub(r"</?(?:tool_call|function_call|function|parameter)[^>]*>", "", cleaned, flags=re.IGNORECASE)
-    return cleaned.strip()
+    return cleaned.strip() if strip_whitespace else cleaned
 
+
+
+# ── Conversational intent classifier ──────────────────────────────────────────
+# Patterns that indicate the user just wants a direct conversational reply with
+# no external data fetching needed.  Keep this list conservative so we never
+# accidentally skip tools the user really needs.
+import re as _re
+
+_CONVERSATIONAL_PATTERNS = _re.compile(
+    r"^\s*(?:"
+    r"hi+[!?\s]*"
+    r"|hello+[!?\s]*"
+    r"|hey+[!?\s]*"
+    r"|howdy[!?\s]*"
+    r"|good\s+(?:morning|afternoon|evening|night)[!?\s]*"
+    r"|thanks?(?:\s+you)?[!?\s]*"
+    r"|thank\s+you[!?\s]*"
+    r"|what\s+(?:can|do)\s+you\s+do[?!\s]*"
+    r"|what\s+are\s+your\s+(?:capabilities|features|skills)[?!\s]*"
+    r"|who\s+are\s+you[?!\s]*"
+    r"|what\s+are\s+you[?!\s]*"
+    r"|what(?:'s| is)\s+(?:your\s+)?(?:name|model)[?!\s]*"
+    r"|how\s+are\s+you[?!\s]*"
+    r"|are\s+you\s+(?:there|ready|ok|alive)[?!\s]*"
+    r"|help[!?\s]*"
+    r"|(?:can|could)\s+you\s+help\s+(?:me)?[?!\s]*"
+    r"|what\s+(?:can|could)\s+i\s+(?:ask|do)[?!\s]*"
+    r")\s*$",
+    _re.IGNORECASE,
+)
+
+
+def is_conversational_query(content: str) -> bool:
+    """Return True when the user message is clearly a greeting or capability
+    question that needs no external tool calls at all.
+
+    Keeps the check conservative: a false-negative (missing a conversational
+    message) only means the tool loop runs unnecessarily; a false-positive
+    (skipping tools that were needed) would break real requests.
+    """
+    stripped = content.strip()
+    # Reject immediately if the message contains URL, code, or is long
+    if len(stripped) > 120:
+        return False
+    if any(ch in stripped for ch in ("```", "http", "github.com", "@")):
+        return False
+    return bool(_CONVERSATIONAL_PATTERNS.match(stripped))
 
 
 class ToolCallOrchestrator:
@@ -512,6 +559,31 @@ class ToolCallOrchestrator:
         4. If tool call is requested, execute tool, emit tool SSE events, append result to context.
         5. Repeat until model produces final answer or max iterations reached.
         """
+        # Fast-path: bypass all tool infrastructure for pure conversational messages.
+        # This avoids a DB round-trip for integrations, the GitHub token lookup, and
+        # injecting the full tool-schema block (~3 KB) into the context.
+        last_user_content = ""
+        for msg in reversed(messages):
+            if msg.role == MessageRole.USER:
+                last_user_content = msg.content or ""
+                break
+        if is_conversational_query(last_user_content):
+            logger.info("ToolLoop fast-path: conversational query detected, skipping tool infrastructure")
+            latest_sel = None
+            async for selection, event in self.router.stream(
+                messages=messages,
+                mode=mode,
+                provider=provider,
+                model=model,
+            ):
+                if latest_sel is None:
+                    latest_sel = selection
+                    yield message_start(selection.provider_name, selection.model, mode, selection.fallback_used)
+                if await is_disconnected():
+                    return
+                if event.delta:
+                    yield text_delta(event.delta)
+            return
         # Determine user integration status for personal tools (e.g. Google Calendar)
         has_calendar = False
         can_write_calendar = False
@@ -607,12 +679,28 @@ class ToolCallOrchestrator:
         iteration = 0
         latest_selection: Optional[ProviderSelection] = None
 
+        # Pre-compute tool name tuple once — used inside the inner streaming loop.
+        # Previously recomputed on every token delta (O(n_tools) per chunk).
+        _dynamic_tool_names = tuple(t.name for t in self.registry.list_tools())
+        _tool_indicators = (
+            "<tool_call",
+            "<function",
+            "<function_call",
+            "```json",
+            '{"name"',
+            '{"tool"',
+            '{"function"',
+            '{"arguments"',
+            '{"parameters"',
+            *_dynamic_tool_names,
+        )
+
         while iteration < max_iterations:
             iteration += 1
             iteration_output: List[str] = []
             stream_buffer = ""
+            in_think_block = False
             is_tool_call_detected = False
-            decision_made = False
             streamed_any = False
 
             try:
@@ -632,62 +720,98 @@ class ToolCallOrchestrator:
                     if event.delta:
                         iteration_output.append(event.delta)
 
-                        if not decision_made:
-                            stream_buffer += event.delta
-                            stripped_buf = stream_buffer.lstrip()
+                        # If tool call has already been detected, don't stream anything to user
+                        if is_tool_call_detected:
+                            continue
 
-                            # Check if thinking block is open
-                            if "<think>" in stripped_buf:
-                                if "</think>" in stripped_buf:
-                                    _, _, after_think = stripped_buf.partition("</think>")
+                        stream_buffer += event.delta
+
+                        while stream_buffer:
+                            # 1. Handle <think>...</think> blocks
+                            if in_think_block:
+                                if "</think>" in stream_buffer:
+                                    _, _, after_think = stream_buffer.partition("</think>")
                                     stream_buffer = after_think
-                                    stripped_buf = stream_buffer.lstrip()
+                                    in_think_block = False
+                                    continue
                                 else:
+                                    # Whole buffer is within think block; swallow it
+                                    stream_buffer = ""
+                                    break
+                            else:
+                                if "<think>" in stream_buffer:
+                                    before_think, _, after_think = stream_buffer.partition("<think>")
+                                    in_think_block = True
+                                    stream_buffer = after_think
+                                    if before_think:
+                                        yield text_delta(before_think)
+                                        streamed_any = True
                                     continue
 
-                            dynamic_tool_names = tuple(t.name for t in self.registry.list_tools())
-                            tool_indicators = (
-                                "<tool_call",
-                                "<function",
-                                "<function_call",
-                                "```json",
-                                '{"name"',
-                                '{"tool"',
-                                '{"function"',
-                                '{"arguments"',
-                                '{"parameters"',
-                                *dynamic_tool_names,
-                            )
-                            is_potential_prefix = any(
-                                ind.startswith(stripped_buf) or stripped_buf.startswith(ind)
-                                for ind in tool_indicators
-                            )
-                            is_confirmed_tool = any(stripped_buf.startswith(ind) for ind in tool_indicators) or bool(
-                                re.search(r'["\']?(?:name|tool|function)["\']?\s*:', stripped_buf)
-                            )
+                                # 2. Check for partial <think> tag at tail of stream_buffer
+                                has_partial_think = any(
+                                    stream_buffer.endswith("<think>"[:i])
+                                    for i in range(1, len("<think>"))
+                                )
+                                if has_partial_think and len(stream_buffer) <= len("<think>"):
+                                    break
 
-                            if is_confirmed_tool:
-                                is_tool_call_detected = True
-                                decision_made = True
-                            elif not is_potential_prefix and (len(stripped_buf) >= 15 or "\n" in stripped_buf):
-                                decision_made = True
-                                is_tool_call_detected = False
-                                clean_buf = strip_tool_call_markup(stream_buffer)
-                                if clean_buf:
-                                    yield text_delta(clean_buf)
-                                    streamed_any = True
-                                stream_buffer = ""
-                        else:
-                            if not is_tool_call_detected:
-                                clean_delta = strip_tool_call_markup(event.delta)
-                                if clean_delta:
-                                    yield text_delta(clean_delta)
+                                # 3. Check for tool call markers
+                                stripped_buf = stream_buffer.lstrip()
+                                tool_indicators = _tool_indicators
+                                is_tool_start = any(stripped_buf.startswith(ind) for ind in tool_indicators) or bool(
+                                    re.search(r'["\']?(?:name|tool|function)["\']?\s*:', stripped_buf)
+                                )
+                                is_potential_tool = any(
+                                    ind.startswith(stripped_buf) or stripped_buf.startswith(ind)
+                                    for ind in _tool_indicators
+                                )
+
+                                if is_tool_start:
+                                    is_tool_call_detected = True
+                                    stream_buffer = ""
+                                    break
+                                elif is_potential_tool and len(stripped_buf) < 20 and "\n" not in stripped_buf:
+                                    # Wait for more tokens to be certain whether it is a tool call
+                                    break
+
+                                # 4. Suppress untagged markdown thinking process (e.g. "Here's a thinking process: ... \n\n")
+                                if re.match(r"^\s*(?:Here'?s a thinking process:?|Thinking Process:?|Thought Process:?)", stream_buffer, re.IGNORECASE):
+                                    if "\n\n" in stream_buffer:
+                                        _, _, stream_buffer = stream_buffer.partition("\n\n")
+                                        continue
+                                    else:
+                                        break
+
+                                # 5. Safe to emit text! Check if buffer ends with a potential <think> prefix to hold back
+                                hold_len = 0
+                                for i in range(1, len("<think>")):
+                                    if stream_buffer.endswith("<think>"[:i]):
+                                        hold_len = i
+                                        break
+
+                                if hold_len > 0:
+                                    to_yield = stream_buffer[:-hold_len]
+                                    stream_buffer = stream_buffer[-hold_len:]
+                                else:
+                                    to_yield = stream_buffer
+                                    stream_buffer = ""
+
+                                if to_yield:
+                                    yield text_delta(to_yield)
                                     streamed_any = True
 
             except Exception as stream_err:
                 logger.warning("Stream error in tool loop iteration %d: %s", iteration, stream_err)
                 yield text_delta(f"I encountered an issue: {stream_err}. Please try again.")
                 return
+
+            # Flush any remaining buffer if not in think block or tool call
+            if stream_buffer and not in_think_block and not is_tool_call_detected:
+                clean_tail = strip_tool_call_markup(stream_buffer, strip_whitespace=False)
+                if clean_tail:
+                    yield text_delta(clean_tail)
+                    streamed_any = True
 
             raw_text = "".join(iteration_output)
 
@@ -702,7 +826,7 @@ class ToolCallOrchestrator:
             if not tool_calls:
                 # No tool call needed -> final answer reached
                 if not streamed_any:
-                    clean_text = strip_tool_call_markup(raw_text) or raw_text
+                    clean_text = strip_tool_call_markup(raw_text, strip_whitespace=True) or raw_text
                     if clean_text:
                         yield text_delta(clean_text)
                 return

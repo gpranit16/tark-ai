@@ -205,3 +205,13 @@
     transform: none !important;
   }
 }
+
+/* ─── Prose / Markdown rendering reset ──────────────────── */
+/* The body sets letter-spacing: -0.012em for the Satoshi UI font.
+   This must NOT be inherited into AI response markdown — it causes
+   words to visually merge (e.g. "Web&News:Searchcurrentevents..."). */
+.prose,
+.prose * {
+  letter-spacing: normal;
+  word-spacing: normal;
+}

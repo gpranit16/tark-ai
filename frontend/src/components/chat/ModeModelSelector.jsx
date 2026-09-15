@@ -66,46 +66,46 @@ const MODES = [
 
 const MODELS = [
   {
+    id: 'meta/llama-3.2-11b-vision-instruct',
+    name: 'Llama 3.2 11B Vision',
+    badge: 'NVIDIA Instant (~0.7s)',
+    badgeColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
+    icon: Zap,
+  },
+  {
+    id: 'qwen/qwen3.6-27b',
+    name: 'Qwen 3.6 27B',
+    badge: 'Groq Ultra Fast',
+    badgeColor: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
+    icon: Zap,
+  },
+  {
     id: 'qwen/qwen3.8-27b',
-    name: 'qwen3.8-27b',
+    name: 'Qwen 3.8 27B',
     badge: 'Balanced / Code',
     badgeColor: 'text-cyan-400 bg-cyan-500/10 border-cyan-500/20',
     icon: Cpu,
   },
   {
-    id: 'meta/llama-3.2-11b-vision-instruct',
-    name: 'Llama 3.2 11B',
-    badge: 'NVIDIA Instant (0.7s)',
-    badgeColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-    icon: Zap,
-  },
-  {
     id: 'nvidia/nemotron-3.5-lightning-30b-a3b',
-    name: 'Nemotron 3.5',
+    name: 'Nemotron 3.5 30B',
     badge: 'NVIDIA 30B',
     badgeColor: 'text-blue-400 bg-blue-500/10 border-blue-500/20',
     icon: Sparkles,
   },
   {
     id: 'openai/gpt-oss-120b',
-    name: 'gpt-oss-120b',
+    name: 'GPT-OSS 120B',
     badge: 'Deep Reasoning',
     badgeColor: 'text-purple-400 bg-purple-500/10 border-purple-500/20',
     icon: Brain,
   },
   {
     id: 'openai/gpt-oss-20b',
-    name: 'gpt-oss-20b',
+    name: 'GPT-OSS 20B',
     badge: 'Fast Reasoning',
-    badgeColor: 'text-amber-400 bg-amber-500/10 border-amber-500/20',
-    icon: Zap,
-  },
-  {
-    id: 'qwen/qwen3.6-27b',
-    name: 'qwen3.6-27b',
-    badge: 'Fast',
-    badgeColor: 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20',
-    icon: Sparkles,
+    badgeColor: 'text-purple-300 bg-purple-500/10 border-purple-500/20',
+    icon: Brain,
   },
 ];
 

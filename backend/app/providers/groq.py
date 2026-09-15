@@ -38,7 +38,7 @@ class GroqProvider(AIProvider):
         if not self.api_key:
             raise ProviderError(ProviderErrorCode.AUTH_ERROR, "Groq API key is not configured", provider=self.name)
         try:
-            from groq import AsyncGroq
+            from app.providers.client_pool import get_groq_client
 
             settings = get_settings()
             kwargs: dict[str, object] = {}
@@ -54,7 +54,8 @@ class GroqProvider(AIProvider):
             else:
                 kwargs["max_tokens"] = 4096
 
-            client = AsyncGroq(api_key=self.api_key, timeout=self.timeout, max_retries=0)
+            # Reuse a pooled client — avoids creating a new httpx connection pool per request
+            client = get_groq_client(self.api_key, self.timeout)
             msg_payload = [
                 {
                     "role": "user" if message.role.value == "tool" else message.role.value,
@@ -84,52 +85,46 @@ class GroqProvider(AIProvider):
                 else:
                     raise
             tool_calls_acc: dict[int, dict[str, str]] = {}
-            try:
-                async for chunk in stream:
-                    choice = chunk.choices[0] if chunk.choices else None
-                    delta = ""
-                    finish_reason = None
-                    if choice is not None:
-                        delta = choice.delta.content or ""
-                        # Accumulate native Groq tool_calls in stream delta if sent by model
-                        if hasattr(choice.delta, "tool_calls") and choice.delta.tool_calls:
-                            for tc in choice.delta.tool_calls:
-                                idx = getattr(tc, "index", 0) or 0
-                                if idx not in tool_calls_acc:
-                                    tool_calls_acc[idx] = {"name": "", "arguments": ""}
-                                fn = getattr(tc, "function", None)
-                                if fn:
-                                    fn_name = getattr(fn, "name", None)
-                                    fn_args = getattr(fn, "arguments", None)
-                                    if fn_name:
-                                        tool_calls_acc[idx]["name"] += fn_name
-                                    if fn_args:
-                                        tool_calls_acc[idx]["arguments"] += fn_args
-                        finish_reason = choice.finish_reason
-                    usage = getattr(chunk, "usage", None)
-                    if delta:
-                        yield ProviderStreamEvent(
-                            delta=delta,
-                            finish_reason=finish_reason,
-                            usage=_usage_from_object(usage),
-                        )
+            async for chunk in stream:
+                choice = chunk.choices[0] if chunk.choices else None
+                delta = ""
+                finish_reason = None
+                if choice is not None:
+                    delta = choice.delta.content or ""
+                    # Accumulate native Groq tool_calls in stream delta if sent by model
+                    if hasattr(choice.delta, "tool_calls") and choice.delta.tool_calls:
+                        for tc in choice.delta.tool_calls:
+                            idx = getattr(tc, "index", 0) or 0
+                            if idx not in tool_calls_acc:
+                                tool_calls_acc[idx] = {"name": "", "arguments": ""}
+                            fn = getattr(tc, "function", None)
+                            if fn:
+                                fn_name = getattr(fn, "name", None)
+                                fn_args = getattr(fn, "arguments", None)
+                                if fn_name:
+                                    tool_calls_acc[idx]["name"] += fn_name
+                                if fn_args:
+                                    tool_calls_acc[idx]["arguments"] += fn_args
+                    finish_reason = choice.finish_reason
+                usage = getattr(chunk, "usage", None)
+                if delta:
+                    yield ProviderStreamEvent(
+                        delta=delta,
+                        finish_reason=finish_reason,
+                        usage=_usage_from_object(usage),
+                    )
 
-                # Flush complete accumulated tool calls if any
-                if tool_calls_acc:
-                    for idx, tc_data in sorted(tool_calls_acc.items()):
-                        t_name = tc_data["name"].strip()
-                        t_args = tc_data["arguments"].strip() or "{}"
-                        if t_name:
-                            yield ProviderStreamEvent(
-                                delta=f'<tool_call>{{"name": "{t_name}", "arguments": {t_args}}}</tool_call>',
-                                finish_reason="tool_calls",
-                                usage=None,
-                            )
-            finally:
-                try:
-                    await client.close()
-                except Exception:
-                    pass
+            # Flush complete accumulated tool calls if any
+            if tool_calls_acc:
+                for idx, tc_data in sorted(tool_calls_acc.items()):
+                    t_name = tc_data["name"].strip()
+                    t_args = tc_data["arguments"].strip() or "{}"
+                    if t_name:
+                        yield ProviderStreamEvent(
+                            delta=f'<tool_call>{{"name": "{t_name}", "arguments": {t_args}}}</tool_call>',
+                            finish_reason="tool_calls",
+                            usage=None,
+                        )
         except Exception as exc:
             raise self.normalize_error(exc) from exc
 
