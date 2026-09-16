@@ -1,8 +1,77 @@
+import re
 from typing import Any
 
 from app.core.config import get_settings
 from app.schemas.document import ParsedDocumentData
 from app.services.chunking.base import BaseChunker
+
+
+def _split_text_with_boundaries(text: str, max_size: int, overlap: int) -> list[str]:
+    """Splits a single block of text respecting paragraph, sentence, and word boundaries.
+    
+    Prevents splitting names, numbers, or terms in the middle.
+    """
+    text = text.strip()
+    if not text:
+        return []
+    if len(text) <= max_size:
+        return [text]
+
+    # Split on paragraph breaks first
+    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+    pieces: list[str] = []
+    for p in paragraphs:
+        if len(p) <= max_size:
+            pieces.append(p)
+        else:
+            # Split paragraph on sentence boundaries
+            sentences = [s.strip() for s in re.split(r'(?<=[.!?\n])\s+', p) if s.strip()]
+            for s in sentences:
+                if len(s) <= max_size:
+                    pieces.append(s)
+                else:
+                    # Split long sentence on word boundaries
+                    words = s.split()
+                    cur_words: list[str] = []
+                    cur_len = 0
+                    for w in words:
+                        if cur_len + len(w) + 1 <= max_size:
+                            cur_words.append(w)
+                            cur_len += len(w) + 1
+                        else:
+                            if cur_words:
+                                pieces.append(" ".join(cur_words))
+                            cur_words = [w]
+                            cur_len = len(w)
+                    if cur_words:
+                        pieces.append(" ".join(cur_words))
+
+    # Assemble pieces into chunks respecting max_size & overlap
+    chunks: list[str] = []
+    current_chunk = ""
+    for piece in pieces:
+        if not current_chunk:
+            current_chunk = piece
+        elif len(current_chunk) + len(piece) + 2 <= max_size:
+            current_chunk += "\n\n" + piece
+        else:
+            chunks.append(current_chunk.strip())
+            # Overlap with the end of previous chunk snapped to a word boundary
+            if overlap > 0 and len(current_chunk) > overlap:
+                tail = current_chunk[-overlap:]
+                space_idx = tail.find(" ")
+                if space_idx != -1 and space_idx < len(tail) - 1:
+                    overlap_str = tail[space_idx + 1:].strip()
+                else:
+                    overlap_str = tail.strip()
+                current_chunk = (overlap_str + "\n\n" + piece).strip()
+            else:
+                current_chunk = piece
+
+    if current_chunk.strip():
+        chunks.append(current_chunk.strip())
+
+    return chunks
 
 
 class DocumentChunker(BaseChunker):
@@ -42,7 +111,7 @@ class DocumentChunker(BaseChunker):
                     if not block_content:
                         continue
 
-                    # If block itself exceeds chunk_size, split by sliding window
+                    # If block itself exceeds chunk_size, split with boundary awareness
                     if len(block_content) > size:
                         # Flush accumulated text first
                         if current_chunk_text:
@@ -60,13 +129,12 @@ class DocumentChunker(BaseChunker):
                             current_block_types = []
 
                         # Split the oversized block
-                        step = max(size - overlap, 1)
-                        for start in range(0, len(block_content), step):
-                            sub_text = block_content[start:start + size].strip()
-                            if sub_text:
+                        sub_pieces = _split_text_with_boundaries(block_content, size, overlap)
+                        for sub_text in sub_pieces:
+                            if sub_text.strip():
                                 chunks.append({
                                     "chunk_index": global_chunk_idx,
-                                    "content": sub_text,
+                                    "content": sub_text.strip(),
                                     "page_number": page_num,
                                     "metadata": {
                                         **current_meta,
@@ -92,9 +160,15 @@ class DocumentChunker(BaseChunker):
                         })
                         global_chunk_idx += 1
 
-                        # Carry over overlap if possible
+                        # Carry over overlap if possible, snapping to word boundary
                         if overlap > 0 and len(current_chunk_text) > overlap:
-                            current_chunk_text = current_chunk_text[-overlap:].strip() + "\n\n" + block_content
+                            tail = current_chunk_text[-overlap:]
+                            space_idx = tail.find(" ")
+                            if space_idx != -1 and space_idx < len(tail) - 1:
+                                overlap_str = tail[space_idx + 1:].strip()
+                            else:
+                                overlap_str = tail.strip()
+                            current_chunk_text = overlap_str + "\n\n" + block_content
                         else:
                             current_chunk_text = block_content
                         current_block_types = [block.block_type]
@@ -128,13 +202,12 @@ class DocumentChunker(BaseChunker):
                     "block_types": ["raw_text"],
                 }
 
-                step = max(size - overlap, 1)
-                for start in range(0, len(raw_text), step):
-                    sub_text = raw_text[start:start + size].strip()
-                    if sub_text:
+                sub_pieces = _split_text_with_boundaries(raw_text, size, overlap)
+                for sub_text in sub_pieces:
+                    if sub_text.strip():
                         chunks.append({
                             "chunk_index": global_chunk_idx,
-                            "content": sub_text,
+                            "content": sub_text.strip(),
                             "page_number": page_num,
                             "metadata": page_meta
                         })

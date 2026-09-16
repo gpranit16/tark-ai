@@ -73,8 +73,8 @@ async def _run_parser_job(file_id: UUID, user_id: UUID) -> None:
                 ingestion_svc = EmbeddingIngestionService()
                 await ingestion_svc.ingest_file(session, file_id, user_id)
             except Exception as ing_err:
-                # Ingestion error can be retried via /api/v1/embeddings/retry/{file_id}
-                pass
+                import logging
+                logging.getLogger(__name__).warning("Automatic embedding ingestion failed for %s: %s", file_id, ing_err)
 
         except Exception as e:
             doc.status = "failed"

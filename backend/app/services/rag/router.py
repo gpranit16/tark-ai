@@ -10,18 +10,34 @@ import re
 
 # Keywords and phrases that specifically indicate querying an attached/uploaded document
 _DOC_REFERENCE_PATTERNS = [
-    r"\bthe\s+document\b",
-    r"\bthe\s+pdf\b",
-    r"\bthe\s+attachment\b",
-    r"\buploaded\s+(?:document|file|pdf|report|paper)\b",
-    r"\battached\s+(?:document|file|pdf)\b",
-    r"\bin\s+the\s+(?:document|pdf|uploaded\s+file)\b",
-    r"\bfrom\s+the\s+(?:document|pdf|uploaded\s+file)\b",
-    r"\bsummarize\s+(?:the\s+)?(?:document|pdf|uploaded\s+file)\b",
-    r"\bwhat\s+does\s+the\s+document\s+say\b",
+    r"\b(?:the|this|that)\s+(?:document|pdf|file|attachment|report|paper|spreadsheet|receipt|invoice|doc)\b",
+    r"\b(?:attached|uploaded)\s+(?:document|pdf|file|attachment|report|paper|spreadsheet|receipt|invoice|doc)\b",
+    r"\bin\s+(?:this|the|that)\s+(?:document|pdf|uploaded\s+file|file|attachment|report|doc)\b",
+    r"\bfrom\s+(?:this|the|that)\s+(?:document|pdf|uploaded\s+file|file|attachment|report|doc)\b",
+    r"\bsummarize\s+(?:this|the|that|my)\s+(?:document|pdf|uploaded\s+file|file|attachment|report|doc)\b",
+    r"\bexplain\s+(?:this|the|that|my)\s+(?:document|pdf|uploaded\s+file|file|attachment|report|doc)\b",
+    r"\bwhat\s+does\s+(?:this|the|that)\s+(?:document|pdf|file|attachment|report|doc)\s+say\b",
+    r"\bwhat(?:'s|\s+is)\s+in\s+(?:this|the|that)\s+(?:document|pdf|file|attachment|report|doc)\b",
+    r"\btell\s+me\s+about\s+(?:this|the|that)\s+(?:document|pdf|file|attachment|report|doc)\b",
+    r"\breview\s+(?:this|the|that)\s+(?:document|pdf|file|attachment|report|doc)\b",
+    r"\baccording\s+to\s+(?:this|the|that)\s+(?:document|pdf|file|attachment|report|doc)\b",
+    r"\bpage\s+\d+\b",
 ]
 
 _COMPILED_DOC_PATTERNS = [re.compile(p, re.IGNORECASE) for p in _DOC_REFERENCE_PATTERNS]
+
+# Deictic follow-up queries that reference prior attachments in the SAME thread
+_ATTACHMENT_FOLLOWUP_PATTERNS = [
+    r"\b(?:what|who|where|when|why|how)\s+(?:is|are|was|were|does|did)\s+(?:in\s+)?(?:it|this|that)\b",
+    r"\b(?:summarize|explain|review|analyze|translate)\s+(?:it|this|that)\b",
+    r"\bwhat\s+(?:is|does|are)\s+it\s+say\b",
+    r"\bwhat\s+is\s+this\b",
+    r"\bwho\s+is\s+this\b",
+    r"\bwhat(?:'s|\s+is)\s+in\s+(?:this|here|it)\b",
+    r"\bwho\s+signed\s+(?:it|this)\b",
+]
+
+_COMPILED_FOLLOWUP_PATTERNS = [re.compile(p, re.IGNORECASE) for p in _ATTACHMENT_FOLLOWUP_PATTERNS]
 
 
 class RAGRouter:
@@ -35,6 +51,7 @@ class RAGRouter:
         content: str,
         file_ids: list | None = None,
         mode: str | None = None,
+        has_thread_attachments: bool = False,
     ) -> bool:
         """Return True if the request should be routed through RAG.
 
@@ -42,6 +59,7 @@ class RAGRouter:
             content: The user message text.
             file_ids: File IDs explicitly attached to this request.
             mode: The conversation mode string ('rag', 'normal', etc.).
+            has_thread_attachments: Whether recent messages in thread contain attachments.
 
         Returns:
             True if RAG pipeline should be used.
@@ -50,19 +68,26 @@ class RAGRouter:
         if mode and mode.lower() == "rag":
             return True
 
-        # Explicit file attachments trigger RAG
+        # Explicit file attachments in current message trigger RAG
         if file_ids:
             return True
 
-        # Document reference phrase detection
         content_lower = content.lower().strip()
+
+        # Document reference phrase detection (e.g., "in this document", "the pdf", etc.)
         for pattern in _COMPILED_DOC_PATTERNS:
             if pattern.search(content_lower):
                 return True
 
-        # Common file extensions in query (e.g. "Pan.pdf", "data.csv")
+        # Common file extensions in query (e.g. "Pan.pdf", "data.csv", "report.docx")
         if re.search(r"\b[\w\-.]+\.(?:pdf|txt|docx|doc|csv|xlsx|pptx|png|jpg|jpeg|json|md|py|js|ts|html)\b", content_lower):
             return True
+
+        # If thread has attachments and user query asks a follow-up specifically referencing it
+        if has_thread_attachments:
+            for pattern in _COMPILED_FOLLOWUP_PATTERNS:
+                if pattern.search(content_lower):
+                    return True
 
         return False
 

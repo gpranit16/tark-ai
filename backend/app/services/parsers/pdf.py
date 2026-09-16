@@ -40,52 +40,56 @@ class PdfParser(BaseParser):
             page_blocks: list[Block] = []
             page_images: list[ImageData] = []
 
-            # Extract images from pypdf page if available
-            extracted_images: list[bytes] = []
-            try:
-                for img in pypdf_page.images:
-                    extracted_images.append(img.data)
-                    page_images.append(ImageData(
-                        page_number=page_idx,
-                        image_index=len(page_images),
-                        format=img.name.split(".")[-1] if "." in img.name else "png"
-                    ))
-            except Exception:
-                pass
+            # Only extract images if this page is scanned or text is very sparse (< 10 chars)
+            if is_scanned or len(raw_text.strip()) < 10:
+                extracted_images: list[bytes] = []
+                try:
+                    for img in pypdf_page.images:
+                        extracted_images.append(img.data)
+                        page_images.append(ImageData(
+                            page_number=page_idx,
+                            image_index=len(page_images),
+                            format=img.name.split(".")[-1] if "." in img.name else "png"
+                        ))
+                except Exception:
+                    pass
 
-            # If page text is sparse/scanned and we extracted page images, run OCR on images (capped at 2 images per page)
-            if (is_scanned or len(raw_text.strip()) < 10) and extracted_images:
-                ocr_used = True
-                ocr_texts: list[str] = []
-                for img_bytes in extracted_images[:2]:
-                    try:
-                        ocr_t, _ = await ocr_provider.extract_text(img_bytes)
-                        if ocr_t.strip():
-                            ocr_texts.append(ocr_t.strip())
-                    except Exception:
-                        pass
-                
-                if ocr_texts:
-                    combined_ocr = "\n".join(ocr_texts)
-                    raw_text = (raw_text + "\n" + combined_ocr).strip()
-                    page_blocks.append(Block(
-                        block_type="paragraph",
-                        content=combined_ocr,
-                        page_number=page_idx,
-                        metadata={"source": "ocr_image_extraction"}
-                    ))
+                if extracted_images:
+                    ocr_used = True
+                    ocr_texts: list[str] = []
+                    for img_bytes in extracted_images[:2]:
+                        try:
+                            ocr_t, _ = await ocr_provider.extract_text(img_bytes)
+                            if ocr_t.strip():
+                                ocr_texts.append(ocr_t.strip())
+                        except Exception:
+                            pass
+                    
+                    if ocr_texts:
+                        combined_ocr = "\n".join(ocr_texts)
+                        raw_text = (raw_text + "\n" + combined_ocr).strip()
+                        page_blocks.append(Block(
+                            block_type="paragraph",
+                            content=combined_ocr,
+                            page_number=page_idx,
+                            metadata={"source": "ocr_image_extraction"}
+                        ))
 
             # Build normal text blocks
             if raw_text.strip():
+                # Clean up arbitrary single line breaks that occur inside sentences
                 lines = raw_text.splitlines()
                 current_p: list[str] = []
                 for line in lines:
                     stripped = line.strip()
                     if not stripped:
                         if current_p:
+                            joined_p = " ".join(current_p)
+                            # Clean up excessive spacing
+                            joined_p = " ".join(joined_p.split())
                             page_blocks.append(Block(
                                 block_type="paragraph",
-                                content="\n".join(current_p),
+                                content=joined_p,
                                 page_number=page_idx
                             ))
                             current_p = []
@@ -93,9 +97,11 @@ class PdfParser(BaseParser):
                         current_p.append(stripped)
                 
                 if current_p:
+                    joined_p = " ".join(current_p)
+                    joined_p = " ".join(joined_p.split())
                     page_blocks.append(Block(
                         block_type="paragraph",
-                        content="\n".join(current_p),
+                        content=joined_p,
                         page_number=page_idx
                     ))
 

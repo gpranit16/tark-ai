@@ -8,6 +8,7 @@ import re
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
 from uuid import UUID
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
@@ -589,7 +590,6 @@ class ToolCallOrchestrator:
         can_write_calendar = False
         if context.session is not None and context.user_id is not None:
             try:
-                from sqlalchemy import select
                 from app.models.integration import UserIntegration
 
                 stmt = select(UserIntegration).where(

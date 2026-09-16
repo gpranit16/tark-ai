@@ -2,17 +2,21 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastapi.responses import StreamingResponse
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1.auth_deps import get_optional_current_user
-from app.db.session import get_db_session
-from app.models.conversation import User
+from app.core.enums import GenerationStatus, MessageRole
+from app.db.session import AsyncSessionLocal, get_db_session
+from app.models.conversation import Message, User
+from app.models.file import File
 from app.schemas.chat import ChatRequest
 from app.schemas.message import MessageCreate, MessageResponse
 from app.schemas.thread import ThreadCreate, ThreadMoveRequest, ThreadResponse, ThreadUpdate
 from app.services import messages as message_service
 from app.services import threads as thread_service
-from app.services.chat.service import ChatService
+from app.services.chat.service import ChatService, get_thread_or_404
+from app.services.rag.router import RAGRouter
 from app.services.threads import DEV_TEST_USER_ID
 
 router = APIRouter(prefix="/threads", tags=["threads"])
@@ -124,27 +128,16 @@ async def chat(
     current_user: User | None = Depends(get_optional_current_user),
     session: AsyncSession = Depends(get_db_session),
 ) -> StreamingResponse:
-    from app.services.rag.router import RAGRouter
-    from app.services.chat.service import get_thread_or_404
-
     service = ChatService()
     rag_router = RAGRouter()
 
     thread = await get_thread_or_404(session, thread_id)
     user_id = current_user.id if current_user else (payload.user_id or thread.user_id)
 
-    from app.db.session import AsyncSessionLocal
-
     # ── Phase 10: Deep Research mode dispatch ─────────────────────────────
     mode_value = payload.mode.value if hasattr(payload.mode, "value") else str(payload.mode)
     if mode_value == "deep_research":
         from app.services.research.manager import ResearchManager
-
-        # Persist user message first
-        from app.core.enums import GenerationStatus, MessageRole
-        from app.models.conversation import Message
-        from app.models.file import File
-        from sqlalchemy import select
 
         attachments_data = []
         if payload.file_ids:
@@ -218,11 +211,25 @@ async def chat(
             headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
         )
 
+    # Check if thread has prior attachments for contextual follow-up routing
+    has_thread_attachments = False
+    if not payload.file_ids and thread_id:
+        att_stmt = select(Message.attachments).where(
+            Message.thread_id == thread_id,
+            Message.attachments.isnot(None),
+        )
+        att_res = await session.execute(att_stmt)
+        for att_list in att_res.scalars():
+            if att_list and len(att_list) > 0:
+                has_thread_attachments = True
+                break
+
     # Determine if this request should use the RAG pipeline
     use_rag = rag_router.should_use_rag(
         content=payload.content,
         file_ids=payload.file_ids,
         mode=payload.mode.value if hasattr(payload.mode, "value") else str(payload.mode),
+        has_thread_attachments=has_thread_attachments,
     )
 
     # RAG mode requires user_id for ownership scoping

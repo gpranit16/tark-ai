@@ -1,4 +1,4 @@
-export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8001';
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 export async function fetchApi(endpoint, options = {}) {
   const url = `${API_BASE_URL}${endpoint}`;
@@ -42,6 +42,9 @@ export async function fetchApi(endpoint, options = {}) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError' || err.message?.includes('aborted')) {
       throw new Error('API Error (408): Request timed out. Please check your connection or try again.');
+    }
+    if (err.message === 'Failed to fetch' || err.name === 'TypeError') {
+      throw new Error('API Error (503): Unable to reach backend server. Please verify backend service is running.');
     }
     throw err;
   }

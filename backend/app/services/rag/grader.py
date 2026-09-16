@@ -62,7 +62,19 @@ def evaluate_deterministic_confidence(
             selected_chunk_indices=[],
         )
 
-    scores = [c.similarity_score for c in chunks]
+    scores = [
+        c.similarity_score
+        for c in chunks
+        if hasattr(c, "similarity_score") and isinstance(c.similarity_score, (int, float))
+    ]
+    if not scores:
+        return GradeResult(
+            relevant=False,
+            confidence=0.0,
+            reason="No valid chunk similarity scores found.",
+            selected_chunk_indices=[],
+        )
+
     top_score = max(scores)
     avg_score = sum(scores) / len(scores)
 

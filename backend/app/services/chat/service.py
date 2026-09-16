@@ -454,7 +454,7 @@ class ChatService:
 
         try:
             orchestrator = CRAGOrchestrator()
-            result = await orchestrator.run(
+            result, context_text, citations, scoped_filenames = await orchestrator.prepare_rag_context(
                 query=payload.content,
                 user_id=user_id,
                 session=session,
@@ -483,26 +483,63 @@ class ChatService:
 
         yield rag_generating()
 
-        # Stream the answer word-by-word to simulate streaming
-        answer = result.answer
-        for word in answer.split(" "):
-            yield text_delta(word + " ")
+        provider_name = self.settings.rag_provider or self.settings.normal_provider or self.settings.default_provider or "nvidia"
+        model_name = self.settings.rag_model or self.settings.normal_model or "meta/llama-3.2-11b-vision-instruct"
+
+        yield message_start(
+            provider=provider_name,
+            model=model_name,
+            mode=payload.mode,
+            fallback_used=False,
+        )
+
+        full_answer_parts: list[str] = []
+        start_gen = time.perf_counter()
+
+        if result.decision == "grounded" and context_text:
+            try:
+                async for token in orchestrator.answer_generator.stream_answer(
+                    query=payload.content,
+                    context_text=context_text,
+                    citations=result.citations,
+                    scoped_filenames=scoped_filenames,
+                ):
+                    if await is_disconnected():
+                        break
+                    full_answer_parts.append(token)
+                    yield text_delta(token)
+            except Exception as stream_err:
+                fallback_msg = f"\n\n[Context from {', '.join(scoped_filenames or ['documents'])}]"
+                full_answer_parts.append(fallback_msg)
+                yield text_delta(fallback_msg)
+        else:
+            refusal = result.answer or "Based on the provided documents, I cannot find sufficient evidence to answer this."
+            words = refusal.split(" ")
+            for i, word in enumerate(words):
+                token = word + (" " if i < len(words) - 1 else "")
+                full_answer_parts.append(token)
+                yield text_delta(token)
+
+        final_answer = "".join(full_answer_parts)
+        gen_ms = int((time.perf_counter() - start_gen) * 1000)
 
         # Persist assistant message
         assistant = await self._persist_assistant(
             session,
             thread_id=thread.id,
-            content=answer,
+            content=final_answer,
             selection=None,
             status=GenerationStatus.COMPLETED,
             usage=UsageMetadata(),
-            latency_ms=0,
+            latency_ms=gen_ms,
             finish_reason="stop",
             mode=payload.mode,
+            provider=provider_name,
+            model=model_name,
         )
 
         yield rag_message_complete(
-            answer=answer,
+            answer=final_answer,
             citations=[c.model_dump(mode="json") for c in result.citations],
             retrieved=result.retrieved_count,
             reranked=result.reranked_count,

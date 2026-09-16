@@ -1,13 +1,10 @@
-"""Scenario verification script for Real World CRAG Latency & Grounding Tests.
-
-Tests:
-Scenario A: "What is the PAN number in Pan.pdf?" -> Fast answer + citation. No unnecessary rewrite.
-Scenario B: "What is the person's bank account number in Pan.pdf?" -> Insufficient evidence. No hallucination.
-Scenario C: Deliberately vague query -> rewrite/retry only when confidence is low.
-"""
+import os
 from uuid import uuid4
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+
+os.environ.setdefault("EMBEDDING_PROVIDER", "mock")
+os.environ.setdefault("RERANKER_MODEL", "mock")
 
 from app.models.conversation import User
 from app.services.rag.crag import CRAGOrchestrator
@@ -58,13 +55,10 @@ async def test_scenario_b_bank_account_rejection(db_session: AsyncSession, user:
     )
 
     print(f"\n[Scenario B Latency Breakdown]: {result.latency}")
-    # With mock embeddings or real models, if bank account is not present and score is low:
-    # If it falls into refusal, citations are 0 and answer states insufficient evidence
     if result.decision == "insufficient_evidence":
         assert len(result.citations) == 0
         assert "cannot find sufficient evidence" in result.answer.lower()
     else:
-        # If mock scored it, generation prompt still enforces strict grounding
         assert "bank account" not in result.answer.lower() or "not" in result.answer.lower() or "cannot" in result.answer.lower()
 
 
@@ -87,3 +81,27 @@ async def test_scenario_c_vague_query_retry_behavior(db_session: AsyncSession, u
     print(f"\n[Scenario C Latency Breakdown]: {result.latency}")
     assert result.crag_attempts <= 2  # Max 1 retry
     assert result.latency is not None
+
+
+@pytest.mark.asyncio
+async def test_scenario_d_what_is_this_synopsis(db_session: AsyncSession, user: User):
+    """Scenario D: 'What is this' overview query on uploaded PDF -> instantly grounded, no rewrite, no refusal."""
+    content = "Pranit Gupta - Senior Software Engineer & AI Architect. Experienced in Python, React, RAG, and Distributed Systems."
+    file_obj, _ = await _create_test_file_and_chunk(
+        db_session, user, "Pranit_Resume.pdf", content, page_number=1
+    )
+
+    orchestrator = CRAGOrchestrator()
+    result = await orchestrator.run(
+        query="what is this?",
+        user_id=user.id,
+        session=db_session,
+        file_ids=[file_obj.id],
+    )
+
+    print(f"\n[Scenario D Latency Breakdown]: {result.latency}")
+    assert result.decision == "grounded"
+    assert result.query_rewritten is False
+    assert len(result.citations) >= 1
+    assert result.citations[0].filename == "Pranit_Resume.pdf"
+    assert "pranit" in result.answer.lower() or len(result.answer) > 20

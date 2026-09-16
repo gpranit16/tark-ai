@@ -568,7 +568,7 @@ export default function ChatRoute() {
           cancelAnimationFrame(streamingRafRef.current);
           streamingRafRef.current = null;
         }
-        const finalContent = streamingContentRef.current;
+        const finalContent = streamingContentRef.current || data?.answer || data?.content || '';
         const citations = pendingCitationsRef.current || [];
         // Update RAG metadata from message_complete event if available
         let currentRagMeta = null;
