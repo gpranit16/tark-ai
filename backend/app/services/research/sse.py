@@ -75,11 +75,48 @@ def research_citation(citation: dict) -> str:
     return sse_event("research_citation", citation)
 
 
-def research_complete(confidence: float, source_count: int, duration_ms: int) -> str:
+def research_classifying(status: str = "Classifying research scope...") -> str:
+    return sse_event("research_classifying", {"status": status})
+
+
+def research_queries_generated(queries: list[dict], count: int) -> str:
+    return sse_event("research_queries_generated", {"queries": queries, "count": count})
+
+
+def research_search_started(query_count: int) -> str:
+    return sse_event("research_search_started", {"query_count": query_count})
+
+
+def research_search_completed(sources_found: int) -> str:
+    return sse_event("research_search_completed", {"sources_found": sources_found})
+
+
+def research_sources_deduplicated(unique_sources: int) -> str:
+    return sse_event("research_sources_deduplicated", {"unique_sources": unique_sources})
+
+
+def research_section_started(section_id: str, title: str) -> str:
+    return sse_event("research_section_started", {"section_id": section_id, "title": title})
+
+
+def research_section_completed(section_id: str, title: str) -> str:
+    return sse_event("research_section_completed", {"section_id": section_id, "title": title})
+
+
+def research_image_started(count: int) -> str:
+    return sse_event("research_image_started", {"count": count})
+
+
+def research_image_completed(images: list[dict]) -> str:
+    return sse_event("research_image_completed", {"images": images, "count": len(images)})
+
+
+def research_complete(confidence: float, source_count: int, duration_ms: int, citation_coverage: float = 1.0) -> str:
     return sse_event("research_complete", {
         "confidence": confidence,
         "source_count": source_count,
         "duration_ms": duration_ms,
+        "citation_coverage": citation_coverage,
     })
 
 
@@ -93,4 +130,5 @@ def research_error(error: str, research_id: str = "") -> str:
 
 def message_end(message_id: str = "") -> str:
     return sse_event("message_end", {"message_id": str(message_id)})
+
 

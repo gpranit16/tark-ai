@@ -32,6 +32,7 @@ from app.services.research.models import ResearchStatus
 from app.services.research.sse import (
     message_end,
     research_cancelled,
+    research_classifying,
     research_complete,
     research_error,
     research_started,
@@ -126,13 +127,21 @@ class ResearchManager:
             "thread_id": str(thread_id),
             "research_id": research_id,
             "project_id": str(project_id) if project_id else None,
+            "research_mode": "open_book",
+            "recency_days": 30,
+            "search_queries": [],
             "plan": None,
             "research_tasks": [],
+            "section_tasks": [],
+            "section_results": [],
             "task_results": [],
             "evidence": [],
             "failed_tasks": [],
             "verified_evidence": [],
             "verification_result": None,
+            "citation_coverage": 1.0,
+            "image_plan": None,
+            "generated_images": [],
             "rewritten_queries": [],
             "retry_count": 0,
             "final_answer": None,
@@ -143,8 +152,9 @@ class ResearchManager:
             "metadata": {"research_id": research_id, "provider": provider, "model": model},
         }
 
-        # Emit research_started
+        # Emit research_started and immediate status
         yield research_started(research_id, query)
+        yield research_classifying("Analyzing research scope & recency requirements...")
         yield message_start(provider or "groq", model or "deep_research", ConversationMode.DEEP_RESEARCH, False)
 
         final_state: Optional[ResearchState] = None
@@ -191,14 +201,22 @@ class ResearchManager:
         verified_ev = final_state.get("verified_evidence", final_state.get("evidence", []))
         evidence_count = len(citations) if citations else len(verified_ev)
         confidence = (final_state.get("verification_result") or {}).get("confidence", 0.0)
+        citation_coverage = final_state.get("citation_coverage", 1.0)
+        generated_images = final_state.get("generated_images", [])
 
         if final_answer:
             chunk_size = 64
             for i in range(0, len(final_answer), chunk_size):
                 yield text_delta(final_answer[i : i + chunk_size])
 
-        # 2. Persist assistant message with exact final answer
+        # 2. Persist assistant message with exact final answer & research attachments
         assistant_msg_id = uuid.uuid4()
+        attachments_list = [
+            {"type": "research_citation", **cit} for cit in citations
+        ] + [
+            {"type": "research_image", "url": img.get("image_url") or img.get("url"), **img} for img in generated_images
+        ]
+
         try:
             active_prov = provider or self.router._provider_for_mode(ConversationMode.DEEP_RESEARCH).value
             active_mod = model or self.router._model_for_mode(ConversationMode.DEEP_RESEARCH)
@@ -211,6 +229,7 @@ class ResearchManager:
                 generation_status=GenerationStatus.COMPLETED,
                 provider=active_prov,
                 model=active_mod,
+                attachments=attachments_list,
             )
             session.add(assistant_msg)
             await session.commit()
@@ -222,11 +241,12 @@ class ResearchManager:
 
         duration_ms = int((time.perf_counter() - start_time) * 1000)
         logger.info(
-            "[RESEARCH] complete research_id=%s duration_ms=%d confidence=%.2f sources=%d",
+            "[RESEARCH] complete research_id=%s duration_ms=%d confidence=%.2f sources=%d coverage=%.2f",
             research_id,
             duration_ms,
             confidence,
             evidence_count,
+            citation_coverage,
         )
 
         # Determine final session status based on completion criteria
@@ -242,16 +262,30 @@ class ResearchManager:
             plan=final_state.get("plan"),
             research_metadata={
                 "citations": citations,
+                "citation_coverage": citation_coverage,
+                "images": generated_images,
                 "errors": final_state.get("errors", []),
                 "tasks_completed": len(final_state.get("task_results", [])),
+                "sections_completed": len(final_state.get("section_results", [])),
                 "tasks_failed": len(final_state.get("failed_tasks", [])),
             },
         )
 
         # 4. Emit completion metrics only AFTER all text_deltas and DB persistence
-        yield research_complete(confidence, evidence_count, duration_ms)
+        yield research_complete(confidence, evidence_count, duration_ms, citation_coverage=citation_coverage)
 
-        # 5. Emit message_end as the final terminal event
+        # 5. Emit message_complete and message_end as final terminal events
+        from app.services.chat.sse import MessageCompletePayload
+        yield message_complete(
+            MessageCompletePayload(
+                message_id=assistant_msg_id,
+                provider=active_prov,
+                model=active_mod,
+                mode=ConversationMode.DEEP_RESEARCH,
+                finish_reason="stop",
+                fallback_used=False,
+            )
+        )
         yield message_end(str(assistant_msg_id))
 
     async def _run_graph(

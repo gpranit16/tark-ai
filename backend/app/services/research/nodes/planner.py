@@ -16,11 +16,59 @@ from uuid import UUID
 from app.core.config import get_settings
 from app.core.enums import ConversationMode, MessageRole
 from app.providers.base import NormalizedMessage
-from app.services.chat.router import ModelRouter
-from app.services.research.models import AgentType, ResearchPlan, ResearchTask
+from app.services.research.models import (
+    AgentType,
+    Evidence,
+    ResearchPlan,
+    ResearchQuery,
+    ResearchTask,
+    SectionTask,
+)
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+
+_QUERY_GEN_SYSTEM = """You are a master research planner. Given a user's question, generate {count} diverse, highly specific search queries covering multiple complementary dimensions.
+Rules:
+1. Cover: primary sources/docs, technical specs/architecture, recent announcements/pricing, comparisons/benchmarks, real-world usage/limitations.
+2. Avoid duplicate phrasing.
+3. Keep each query concise and keyword-dense (ideal for search engines).
+4. Output ONLY valid JSON:
+{{
+  "queries": [
+    {{
+      "query": "specific search string",
+      "purpose": "why this query is needed",
+      "recency_days": {recency_days}
+    }}
+  ]
+}}"""
+
+_SECTION_PLAN_SYSTEM = """You are an expert research editor. Given a research query and gathered evidence, divide the comprehensive research report into 4 to 8 distinct, non-overlapping section tasks.
+Rules:
+1. Each section must cover a clear sub-topic (e.g., Executive Overview, Technical Architecture, Performance & Benchmarks, Pricing & Availability, Real-World Tradeoffs).
+2. Each section task must contain:
+   - "id": short unique string
+   - "title": clear section heading
+   - "goal": what this section must establish
+   - "key_questions": list of 2-3 specific questions to answer
+   - "target_words": estimated word count (250-400)
+   - "required_citations": true
+   - "needs_code": true/false
+3. Respond ONLY with valid JSON:
+{{
+  "sections": [
+    {{
+      "id": "s1",
+      "title": "Section Title",
+      "goal": "Specific goal",
+      "key_questions": ["Q1?", "Q2?"],
+      "target_words": 300,
+      "required_citations": true,
+      "needs_code": false
+    }}
+  ]
+}}"""
 
 _PLANNER_SYSTEM = """You are an expert research strategist. Your job is to decompose a user's research query into a set of independent, focused research sub-tasks that can be researched in parallel.
 
@@ -84,12 +132,18 @@ class ResearchPlanner:
             NormalizedMessage(role=MessageRole.USER, content=f"Research query: {query}"),
         ]
 
-        active_provider = provider or self.provider
-        active_model = model or self.model
+        from app.services.research.router import ResearchTaskType, select_research_model
+        decision = select_research_model(
+            ResearchTaskType.RESEARCH_PLANNING,
+            self.router,
+            explicit_provider=provider or self.provider,
+            explicit_model=model or self.model,
+        )
         raw_output = await self._stream_collect(
             messages,
-            provider=active_provider,
-            model=active_model,
+            provider=decision.provider,
+            model=decision.model,
+            timeout=6.0,
         )
         tasks = self._parse_tasks(query, raw_output, max_tasks)
 
@@ -98,6 +152,135 @@ class ResearchPlanner:
             research_intent=tasks[0].query if tasks else query,
             tasks=tasks,
         )
+
+    async def generate_queries(
+        self,
+        query: str,
+        recency_days: int = 30,
+        count: int = 5,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> list[ResearchQuery]:
+        """Generate 3–8 diverse, targeted search queries covering complementary angles."""
+        from app.services.research.router import ResearchTaskType, select_research_model
+        decision = select_research_model(
+            ResearchTaskType.QUERY_GENERATION,
+            self.router,
+            explicit_provider=provider or self.provider,
+            explicit_model=model or self.model,
+        )
+
+        system_prompt = _QUERY_GEN_SYSTEM.format(count=count, recency_days=recency_days)
+        messages = [
+            NormalizedMessage(role=MessageRole.SYSTEM, content=system_prompt),
+            NormalizedMessage(role=MessageRole.USER, content=f"Research topic: {query}"),
+        ]
+
+        raw_output = await self._stream_collect(
+            messages,
+            provider=decision.provider,
+            model=decision.model,
+            timeout=6.0,
+        )
+
+        data = self._extract_json_dict(raw_output)
+        raw_queries = data.get("queries", [])
+        parsed_queries: list[ResearchQuery] = []
+        for rq in raw_queries:
+            if isinstance(rq, dict) and rq.get("query"):
+                parsed_queries.append(
+                    ResearchQuery(
+                        query=str(rq["query"]).strip(),
+                        purpose=str(rq.get("purpose", "")).strip(),
+                        recency_days=int(rq.get("recency_days", recency_days)),
+                    )
+                )
+
+        if not parsed_queries:
+            # Deterministic diverse angles fallback
+            clean_q = query.strip()
+            parsed_queries = [
+                ResearchQuery(query=f"{clean_q} architecture technical overview", purpose="Technical architecture", recency_days=recency_days),
+                ResearchQuery(query=f"{clean_q} pricing comparison limitations", purpose="Pricing & limitations", recency_days=recency_days),
+                ResearchQuery(query=f"{clean_q} benchmarks capabilities performance", purpose="Benchmarks & performance", recency_days=recency_days),
+                ResearchQuery(query=f"{clean_q} latest update documentation", purpose="Recent updates", recency_days=recency_days),
+                ResearchQuery(query=clean_q, purpose="Primary query", recency_days=recency_days),
+            ]
+
+        return parsed_queries[:max(3, count)]
+
+    async def plan_sections(
+        self,
+        query: str,
+        evidence: list[Evidence],
+        max_sections: int = 6,
+        provider: Optional[str] = None,
+        model: Optional[str] = None,
+    ) -> list[SectionTask]:
+        """
+        Decompose research into 4–8 section tasks for parallel fanout workers.
+        Uses Gemini 3.5 Flash-Lite (or reasoning fallback) tested for heavy planning.
+        """
+        from app.services.research.models import SectionTask
+        from app.services.research.router import ResearchTaskType, select_research_model
+        decision = select_research_model(
+            ResearchTaskType.RESEARCH_PLANNING,
+            self.router,
+            explicit_provider=provider or self.provider,
+            explicit_model=model or self.model,
+        )
+
+        evidence_summary = "\n".join(
+            f"- [{idx+1}] {e.title} ({e.domain or 'web'}): {e.snippet[:120]}"
+            for idx, e in enumerate(evidence[:12])
+        )
+
+        system_prompt = _SECTION_PLAN_SYSTEM
+        user_prompt = (
+            f"Research Question: {query}\n\n"
+            f"Discovered Evidence Sources ({len(evidence)} total):\n{evidence_summary}\n\n"
+            f"Generate {max_sections} structured section tasks."
+        )
+
+        messages = [
+            NormalizedMessage(role=MessageRole.SYSTEM, content=system_prompt),
+            NormalizedMessage(role=MessageRole.USER, content=user_prompt),
+        ]
+
+        raw_output = await self._stream_collect(
+            messages,
+            provider=decision.provider,
+            model=decision.model,
+            timeout=10.0,
+        )
+
+        data = self._extract_json_dict(raw_output)
+        raw_sections = data.get("sections", [])
+        sections: list[SectionTask] = []
+        for s in raw_sections:
+            if isinstance(s, dict) and s.get("title"):
+                sections.append(
+                    SectionTask(
+                        id=str(s.get("id") or str(len(sections) + 1)),
+                        title=str(s.get("title")),
+                        goal=str(s.get("goal", "")),
+                        key_questions=[str(q) for q in s.get("key_questions", [])],
+                        target_words=int(s.get("target_words", 300)),
+                        required_citations=bool(s.get("required_citations", True)),
+                        needs_code=bool(s.get("needs_code", False)),
+                    )
+                )
+
+        if not sections:
+            # Fallback sections
+            sections = [
+                SectionTask(id="s1", title="Executive Summary & Overview", goal="Synthesize high-level landscape"),
+                SectionTask(id="s2", title="Technical Architecture & Details", goal="Analyze core technology"),
+                SectionTask(id="s3", title="Comparisons & Real-World Tradeoffs", goal="Evaluate alternatives"),
+                SectionTask(id="s4", title="Limitations & Future Outlook", goal="Document caveats and future direction"),
+            ]
+
+        return sections[:8]
 
     async def _stream_collect(
         self,

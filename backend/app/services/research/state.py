@@ -21,18 +21,28 @@ class ResearchState(TypedDict, total=False):
     project_id: Optional[str]            # Optional project scope
 
     # ── Planning ───────────────────────────────────────────────────────────
+    research_mode: str                    # "open_book", "hybrid", "closed_book"
+    recency_days: int                     # Recency requirement in days
+    search_queries: list[dict]            # Serialized ResearchQuery list
     plan: Optional[dict]                  # Serialized ResearchPlan
     research_tasks: list[dict]            # List of serialized ResearchTask
+    section_tasks: list[dict]             # List of serialized SectionTask for fanout
 
     # ── Research Results ───────────────────────────────────────────────────
     # Annotated with operator.add so parallel branches can merge lists
     task_results: Annotated[list[dict], operator.add]   # Completed task results
     evidence: Annotated[list[dict], operator.add]        # Collected Evidence objects
     failed_tasks: Annotated[list[dict], operator.add]    # Failed task records
+    section_results: list[dict]                         # Completed SectionResult objects
 
     # ── Verification ───────────────────────────────────────────────────────
     verified_evidence: list[dict]         # Evidence passing verification
     verification_result: Optional[dict]  # Serialized VerificationResult
+    citation_coverage: float              # 0.0 to 1.0 deterministic coverage score
+
+    # ── Visuals ────────────────────────────────────────────────────────────
+    image_plan: Optional[dict]            # Serialized ImagePlan
+    generated_images: list[dict]          # Serialized generated ImageItem list
 
     # ── Refinement ─────────────────────────────────────────────────────────
     rewritten_queries: list[str]          # Queries already tried (dedup)

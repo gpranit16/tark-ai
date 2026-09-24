@@ -60,8 +60,10 @@ class Evidence(BaseModel):
     page_number: Optional[int] = None
     snippet: str = ""          # short excerpt for context
     content: str = ""          # full extracted content
+    query: str = ""            # Query that found this evidence
     published_at: Optional[str] = None
     relevance: float = 0.5     # 0.0–1.0
+    recency: float = 0.5       # 0.0–1.0, recency score based on query freshness needs
     reliability: float = 0.7   # 0.0–1.0
     credibility_score: float = 0.7  # 0.0–1.0, scored by source authority
     is_official: bool = False  # True for primary/official vendor domains or docs
@@ -97,6 +99,57 @@ class ResearchPlan(BaseModel):
     research_intent: str = ""
     tasks: list[ResearchTask] = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+
+class ResearchRouterResult(BaseModel):
+    """Output of the ResearchRouter."""
+    mode: str = "open_book"  # closed_book, hybrid, open_book
+    requires_research: bool = True
+    reason: str = ""
+    recency_days: int = 30
+    queries_needed: int = 5
+
+
+class ResearchQuery(BaseModel):
+    """A targeted search query generated during Query Planning."""
+    query: str
+    purpose: str = ""
+    recency_days: int = 30
+
+
+class SectionTask(BaseModel):
+    """A research section task for LangGraph fanout."""
+    id: str = Field(default_factory=lambda: str(uuid.uuid4())[:8])
+    title: str
+    goal: str
+    key_questions: list[str] = Field(default_factory=list)
+    target_words: int = 300
+    required_citations: bool = True
+    evidence_tags: list[str] = Field(default_factory=list)
+    needs_code: bool = False
+
+
+class SectionResult(BaseModel):
+    """Output of an individual section worker."""
+    section_title: str
+    content: str
+    citations: list[dict] = Field(default_factory=list)
+    unsupported_claims: list[str] = Field(default_factory=list)
+
+
+class ImageItem(BaseModel):
+    """An image candidate proposed by the Image Planner."""
+    purpose: str
+    placement: str
+    prompt: str
+    image_url: Optional[str] = None
+    caption: Optional[str] = None
+
+
+class ImagePlan(BaseModel):
+    """Output of the Image Planner."""
+    should_generate: bool = False
+    images: list[ImageItem] = Field(default_factory=list)
 
 
 class ResearchStatus(StrEnum):

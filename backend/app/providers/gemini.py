@@ -52,7 +52,8 @@ class GeminiProvider(AIProvider):
                     config=config,
                 )
                 async for chunk in stream:
-                    yield ProviderStreamEvent(delta=getattr(chunk, "text", "") or "", usage=_usage_from_chunk(chunk))
+                    delta_text = _extract_chunk_text(chunk)
+                    yield ProviderStreamEvent(delta=delta_text, usage=_usage_from_chunk(chunk))
         except Exception as exc:
             raise self.normalize_error(exc) from exc
 
@@ -140,3 +141,30 @@ def _usage_from_chunk(chunk: object) -> UsageMetadata:
 
 
 _RETRYABLE = {ProviderErrorCode.RATE_LIMIT, ProviderErrorCode.TIMEOUT, ProviderErrorCode.UNAVAILABLE}
+
+
+def _extract_chunk_text(chunk: object) -> str:
+    """Extract clean text delta from Gemini streaming chunk, avoiding thought leakage."""
+    try:
+        candidates = getattr(chunk, "candidates", None)
+        if candidates and len(candidates) > 0:
+            c = candidates[0]
+            content = getattr(c, "content", None)
+            parts = getattr(content, "parts", None) if content else None
+            if parts:
+                text_parts: list[str] = []
+                for p in parts:
+                    # Ignore internal thought/reasoning parts
+                    if getattr(p, "thought", False):
+                        continue
+                    pt = getattr(p, "text", None)
+                    if pt:
+                        text_parts.append(pt)
+                return "".join(text_parts)
+            return ""
+    except Exception:
+        pass
+    try:
+        return getattr(chunk, "text", "") or ""
+    except Exception:
+        return ""

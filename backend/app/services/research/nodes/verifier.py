@@ -90,12 +90,18 @@ class VerifierAgent:
             ),
         ]
 
-        active_provider = provider or self.provider
-        active_model = model or self.model
+        from app.services.research.router import ResearchTaskType, select_research_model
+        decision = select_research_model(
+            ResearchTaskType.EVIDENCE_VERIFICATION,
+            self.router,
+            explicit_provider=provider or self.provider,
+            explicit_model=model or self.model,
+        )
         raw_output = await self._stream_collect(
             messages,
-            provider=active_provider,
-            model=active_model,
+            provider=decision.provider,
+            model=decision.model,
+            timeout=35.0,
         )
         return self._parse_result(raw_output, min_confidence, coverage, evidence)
 
@@ -290,3 +296,80 @@ class VerifierAgent:
                 except Exception:
                     pass
         return {}
+
+    @classmethod
+    def validate_citations_deterministically(
+        cls,
+        evidence: list[Evidence],
+        content: str,
+        candidate_citations: list[dict],
+    ) -> tuple[str, list[dict], float, list[str]]:
+        """
+        Deterministic, pure-Python citation verification.
+        Validates:
+        - URL exists in evidence
+        - Citation matches canonical known sources
+        - Fabricated citation indices [N] are stripped from content
+        - Computes citation coverage metric (0.0 to 1.0)
+        """
+        known_canonical_urls: set[str] = set()
+        source_index_map: dict[int, Evidence] = {}
+        for idx, ev in enumerate(evidence, start=1):
+            source_index_map[idx] = ev
+            if ev.url:
+                norm = ev.url.split("?")[0].rstrip("/").lower()
+                known_canonical_urls.add(norm)
+
+        # 1. Clean fabricated [N] references where N > len(evidence) or N < 1
+        valid_indices: set[int] = set()
+        def _replace_cit(match: re.Match) -> str:
+            n_str = match.group(1)
+            if n_str.isdigit():
+                val = int(n_str)
+                if 1 <= val <= len(evidence):
+                    valid_indices.add(val)
+                    return f"[{val}]"
+            return ""  # Remove invalid citation marker
+
+        cleaned_content = re.sub(r"\[(\d+)\]", _replace_cit, content)
+        # Clean double spaces caused by removed tags
+        cleaned_content = re.sub(r" +([,\.\)])", r"\1", cleaned_content)
+
+        # 2. Validate candidate citation objects
+        verified_citations: list[dict] = []
+        rejected_claims: list[str] = []
+        seen_cit_urls: set[str] = set()
+
+        # Prioritize citations matching indices found in cleaned content
+        for idx in sorted(valid_indices):
+            ev = source_index_map.get(idx)
+            if ev:
+                norm_u = (ev.url or "").split("?")[0].rstrip("/").lower()
+                if norm_u and norm_u in seen_cit_urls:
+                    continue
+                if norm_u:
+                    seen_cit_urls.add(norm_u)
+                verified_citations.append({
+                    "citation_id": f"cit-{idx}",
+                    "source_type": ev.source_type.value if hasattr(ev.source_type, "value") else str(ev.source_type),
+                    "title": ev.title,
+                    "url": ev.url,
+                    "domain": ev.domain,
+                    "published_at": ev.published_at,
+                })
+
+        for cit in candidate_citations:
+            url = (cit.get("url") or "").strip()
+            norm = url.split("?")[0].rstrip("/").lower() if url else ""
+            if norm and norm in known_canonical_urls:
+                if norm not in seen_cit_urls:
+                    seen_cit_urls.add(norm)
+                    verified_citations.append(cit)
+            elif url:
+                rejected_claims.append(f"Rejected fabricated/unknown citation URL: {url[:80]}")
+
+        # 3. Calculate deterministic citation coverage (0.0 to 1.0)
+        target_sources = min(len(evidence), 6) if evidence else 1
+        coverage_score = round(min(1.0, len(verified_citations) / max(1, target_sources)), 2)
+
+        return cleaned_content, verified_citations, coverage_score, rejected_claims

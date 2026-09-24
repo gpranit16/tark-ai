@@ -56,9 +56,10 @@ class ModelRouter:
                 timeout=settings.provider_timeout_seconds,
             )
         if settings.gemini_api_key:
+            default_gemini = getattr(settings, "deep_research_gemini_model", "gemini-3.5-flash-lite") or "gemini-3.5-flash-lite"
             providers[ProviderName.GEMINI] = GeminiProvider(
                 api_key=settings.gemini_api_key,
-                default_model="gemini-2.5-flash",
+                default_model=default_gemini,
                 timeout=settings.provider_timeout_seconds,
             )
         if settings.mistral_api_key:
@@ -77,8 +78,13 @@ class ModelRouter:
         provider: str | None = None,
         model: str | None = None,
         fallback_used: bool = False,
+        attempted: set[ProviderName] | None = None,
     ) -> ProviderSelection:
-        if provider:
+        if fallback_used and attempted:
+            order = self._provider_order(mode)
+            candidate = next((p for p in order if p not in attempted and p in self.providers), None)
+            provider_name = candidate or self._provider_for_mode(mode)
+        elif provider:
             provider_name = self._provider_name(provider)
         elif model and (model.startswith("nvidia") or "nemotron" in model.lower() or model.startswith("deepseek") or model.startswith("meta/llama-3.2")):
             provider_name = ProviderName.NVIDIA
@@ -100,8 +106,9 @@ class ModelRouter:
         else:
             configured_model = model or self._model_for_mode(mode) or selected_provider.default_model
             selected_model = (configured_model or selected_provider.default_model).strip()
-            if provider_name == ProviderName.GEMINI and not selected_model.startswith("gemini"):
-                selected_model = selected_provider.default_model
+            if provider_name == ProviderName.GEMINI:
+                if mode == ConversationMode.DEEP_RESEARCH or "2.5" in selected_model or not selected_model.startswith("gemini"):
+                    selected_model = getattr(self.settings, "deep_research_gemini_model", "gemini-3.5-flash-lite") or "gemini-3.5-flash-lite"
             elif provider_name == ProviderName.MISTRAL and not selected_model.startswith("mistral"):
                 selected_model = selected_provider.default_model
             elif provider_name == ProviderName.NVIDIA and not (selected_model.startswith("nvidia") or "nemotron" in selected_model.lower() or selected_model.startswith("deepseek") or selected_model.startswith("meta/llama-3.2") or "mistral-nemotron" in selected_model):
@@ -130,9 +137,10 @@ class ModelRouter:
         while True:
             selection = self.select(
                 mode=mode,
-                provider=provider,
-                model=model,
+                provider=provider if not attempted else None,
+                model=model if not attempted else None,
                 fallback_used=bool(attempted),
+                attempted=attempted,
             )
             if primary_selection is None:
                 primary_selection = selection
@@ -245,9 +253,7 @@ class ModelRouter:
         *,
         explicit_provider: bool,
     ) -> ProviderName | None:
-        if not self.settings.auto_fallback or (explicit_provider and not self.settings.auto_fallback):
-            return None
-        if not error.retryable and error.code != ProviderErrorCode.AUTH_ERROR:
+        if not error.retryable and error.code not in (ProviderErrorCode.AUTH_ERROR, ProviderErrorCode.UNKNOWN):
             return None
         for provider_name in self.fallback_order:
             if provider_name not in attempted and provider_name in self.providers:

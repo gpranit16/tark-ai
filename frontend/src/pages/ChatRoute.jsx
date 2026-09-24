@@ -10,13 +10,14 @@ import { threadApi } from '../api/threadApi';
 import { fileApi } from '../api/fileApi';
 import { settingsApi } from '../api/settingsApi';
 import { useSSE } from '../hooks/useSSE';
-import { Send, Square, Globe, EyeOff, ShieldAlert, Sparkles, Code2, Brain, Loader2, FileText, BookOpen, Database, Image as ImageIcon, HardDrive, Cloud, Mic } from 'lucide-react';
+import { Send, Square, Globe, EyeOff, ShieldAlert, Sparkles, Code2, Brain, Loader2, FileText, BookOpen, Database, Image as ImageIcon, HardDrive, Cloud, Mic, RotateCcw } from 'lucide-react';
 import clsx from 'clsx';
 import 'highlight.js/styles/atom-one-dark.css';
 import FileUploader from '../components/chat/FileUploader';
 import FileList from '../components/chat/FileList';
 import ResearchProgress from '../components/chat/ResearchProgress';
 import ResearchCitations from '../components/chat/ResearchCitations';
+import ResearchReportView from '../components/chat/ResearchReportView';
 import CodeBlock from '../components/chat/CodeBlock';
 import CodingProgress from '../components/chat/CodingProgress';
 import CRAGDebugPanel from '../components/chat/CRAGDebugPanel';
@@ -89,18 +90,40 @@ const MessageBubble = memo(function MessageBubble({
           </div>
         )}
 
-        {renderContentFn(msg.content)}
+        {(() => {
+          const researchCitations = msg.research_citations || msg.attachments?.filter(a => a.type === 'research_citation') || [];
+          const researchImages = (msg.research_images || msg.attachments?.filter(a => a.type === 'research_image') || [])
+            .map(img => ({ ...img, url: img.url || img.image_url }));
+          const isDeepResearch = (msg.mode === 'deep_research' || researchCitations.length > 0) && msg.role === 'assistant';
+
+          if (isDeepResearch) {
+            return (
+              <ResearchReportView
+                content={msg.content}
+                citations={researchCitations}
+                images={researchImages}
+                metadata={msg.research_metadata}
+                renderContentFn={renderContentFn}
+              />
+            );
+          }
+
+          return (
+            <>
+              {renderContentFn(msg.content)}
+              {/* Fallback Research Citations if not in report view */}
+              {showCitationsSetting && researchCitations.length > 0 && (
+                <ResearchCitations citations={researchCitations} />
+              )}
+            </>
+          );
+        })()}
 
         {/* Message Timestamps */}
         {showTimestamps && msg.created_at && (
           <div className={clsx("text-[10px] text-[#767676] mt-1.5", msg.role === 'user' ? 'text-right' : 'text-left')}>
             {new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </div>
-        )}
-
-        {/* Research Citations */}
-        {showCitationsSetting && msg.research_citations && msg.research_citations.length > 0 && (
-          <ResearchCitations citations={msg.research_citations} />
         )}
         {/* RAG Citations */}
         {showCitationsSetting && msg.citations && msg.citations.length > 0 && (!msg.research_citations || msg.research_citations.length === 0) && (
@@ -234,6 +257,8 @@ export default function ChatRoute() {
   // Phase 10 Deep Research state
   const [researchEvents, setResearchEvents] = useState([]);
   const [researchCitations, setResearchCitations] = useState([]);
+  const [researchImages, setResearchImages] = useState([]);
+  const [researchMeta, setResearchMeta] = useState(null);
   const [isResearching, setIsResearching] = useState(false);
   // Phase 12 Coding state
   const [codingEvents, setCodingEvents] = useState([]);
@@ -471,6 +496,8 @@ export default function ChatRoute() {
     setActiveToolEvents([]);
     setResearchEvents([]);
     setResearchCitations([]);
+    setResearchImages([]);
+    setResearchMeta(null);
     setIsResearching(mode === 'deep_research');
     setCodingEvents([]);
     setIsCoding(mode === 'coding');
@@ -585,14 +612,22 @@ export default function ChatRoute() {
           };
           setRagMeta(currentRagMeta);
         }
+        const activeResearchCitations = [...researchCitations];
+        const activeResearchImages = [...researchImages];
+        const activeResearchMeta = researchMeta;
+
         setLocalMessages((prev) => [
           ...prev,
           {
             id: `asst-${Date.now()}`,
             role: 'assistant',
             content: finalContent,
+            mode: mode,
             created_at: new Date().toISOString(),
             citations: citations.length > 0 ? citations : undefined,
+            research_citations: activeResearchCitations.length > 0 ? activeResearchCitations : undefined,
+            research_images: activeResearchImages.length > 0 ? activeResearchImages : undefined,
+            research_metadata: activeResearchMeta || undefined,
             ragMeta: currentRagMeta || undefined,
           },
         ]);
@@ -600,6 +635,10 @@ export default function ChatRoute() {
         streamingContentRef.current = '';
         pendingCitationsRef.current = [];
         setActiveToolEvents([]);
+        setResearchEvents([]);
+        setResearchCitations([]);
+        setResearchImages([]);
+        setResearchMeta(null);
 
         queryClient.invalidateQueries({ queryKey: ['threads'] });
         queryClient.invalidateQueries({ queryKey: ['thread', activeThreadId] });
@@ -644,15 +683,37 @@ export default function ChatRoute() {
         setRagMeta(prev => ({ ...prev, attempts: data.attempt }));
       },
       // Phase 10 Research SSE callbacks
+      onResearchClassifying: (data) => {
+        setIsResearching(true);
+        setResearchEvents(prev => [...prev, { type: 'research_classifying', data }]);
+      },
       onResearchStarted: (data) => {
         setIsResearching(true);
         setResearchEvents(prev => [...prev, { type: 'research_started', data }]);
+      },
+      onResearchQueriesGenerated: (data) => {
+        setResearchEvents(prev => [...prev, { type: 'research_queries_generated', data }]);
+      },
+      onResearchSearchStarted: (data) => {
+        setResearchEvents(prev => [...prev, { type: 'research_search_started', data }]);
+      },
+      onResearchSearchCompleted: (data) => {
+        setResearchEvents(prev => [...prev, { type: 'research_search_completed', data }]);
+      },
+      onResearchSourcesDeduplicated: (data) => {
+        setResearchEvents(prev => [...prev, { type: 'research_sources_deduplicated', data }]);
       },
       onResearchPlanning: (data) => {
         setResearchEvents(prev => [...prev, { type: 'research_planning', data }]);
       },
       onResearchPlanCreated: (data) => {
         setResearchEvents(prev => [...prev, { type: 'research_plan_created', data }]);
+      },
+      onResearchSectionStarted: (data) => {
+        setResearchEvents(prev => [...prev, { type: 'research_section_started', data }]);
+      },
+      onResearchSectionCompleted: (data) => {
+        setResearchEvents(prev => [...prev, { type: 'research_section_completed', data }]);
       },
       onResearchTaskStarted: (data) => {
         setResearchEvents(prev => [...prev, { type: 'research_task_started', data }]);
@@ -681,12 +742,24 @@ export default function ChatRoute() {
       onResearchSynthesisStarted: (data) => {
         setResearchEvents(prev => [...prev, { type: 'research_synthesis_started', data }]);
       },
+      onResearchImageStarted: (data) => {
+        setResearchEvents(prev => [...prev, { type: 'research_image_started', data }]);
+      },
+      onResearchImageCompleted: (data) => {
+        const imgs = (data?.images || []).map(img => ({
+          ...img,
+          url: img.url || img.image_url,
+        }));
+        setResearchImages(prev => [...prev, ...imgs]);
+        setResearchEvents(prev => [...prev, { type: 'research_image_completed', data }]);
+      },
       onResearchCitation: (data) => {
         setResearchCitations(prev => [...prev, data]);
         setResearchEvents(prev => [...prev, { type: 'research_citation', data }]);
       },
       onResearchComplete: (data) => {
         setIsResearching(false);
+        setResearchMeta(data);
         setResearchEvents(prev => [...prev, { type: 'research_complete', data }]);
       },
       onResearchCancelled: (data) => {
@@ -754,8 +827,54 @@ export default function ChatRoute() {
           navigate(`/chat/${activeThreadId}`, { replace: true });
         }
       },
+      onAbort: () => {
+        if (streamingRafRef.current) {
+          cancelAnimationFrame(streamingRafRef.current);
+          streamingRafRef.current = null;
+        }
+        const partial = streamingContentRef.current;
+        if (partial) {
+          setLocalMessages((prev) => [
+            ...prev,
+            {
+              id: `asst-${Date.now()}`,
+              role: 'assistant',
+              content: partial,
+              mode: mode,
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
+        setStreamingDisplay(null);
+        streamingContentRef.current = '';
+      },
     });
   }, [threadId, isStreaming, provider, model, mode, navigate, queryClient, streamChat, uploadedFiles, isTemporaryChat, webSearchEnabled]);
+
+  const handleStopStreaming = useCallback(() => {
+    stopStreaming();
+    if (streamingRafRef.current) {
+      cancelAnimationFrame(streamingRafRef.current);
+      streamingRafRef.current = null;
+    }
+    const finalContent = streamingContentRef.current;
+    if (finalContent) {
+      setLocalMessages((prev) => [
+        ...prev,
+        {
+          id: `asst-${Date.now()}`,
+          role: 'assistant',
+          content: finalContent,
+          mode: mode,
+          created_at: new Date().toISOString(),
+        },
+      ]);
+    }
+    setStreamingDisplay(null);
+    streamingContentRef.current = '';
+    pendingCitationsRef.current = [];
+    setActiveToolEvents([]);
+  }, [stopStreaming, mode]);
 
   const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
 
@@ -775,6 +894,28 @@ export default function ChatRoute() {
     }
     setIsVoiceModeOpen(true);
   };
+
+  const handleResetChat = useCallback(() => {
+    if (isStreaming) {
+      stopStreaming();
+    }
+    setLocalMessages([]);
+    setStreamingDisplay(null);
+    streamingContentRef.current = '';
+    setUploadedFiles([]);
+    setActiveToolEvents([]);
+    setResearchEvents([]);
+    setResearchCitations([]);
+    setResearchImages([]);
+    setResearchMeta(null);
+    setCodingEvents([]);
+    setInputMessage('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+      textareaRef.current.focus();
+    }
+    navigate('/', { replace: true });
+  }, [isStreaming, stopStreaming, navigate]);
 
 
   const renderContent = useCallback((content) => {
@@ -908,6 +1049,16 @@ export default function ChatRoute() {
           )}
         </div>
         <div className="flex items-center gap-2">
+          {/* Clear / Reset Chat Button */}
+          <button
+            onClick={handleResetChat}
+            title="Clear current chat and start a new conversation"
+            className="text-[11px] px-2.5 py-1 rounded-lg border border-white/[0.06] bg-[#101011] hover:bg-[#141415] hover:border-white/[0.15] text-[#A0A0A0] hover:text-[#F4F2ED] transition-all font-medium flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+          >
+            <RotateCcw size={12} className="text-[#A0A0A0]" />
+            <span>Clear Chat</span>
+          </button>
+
           {isAuthenticated ? (
             <>
               <button
@@ -1291,7 +1442,7 @@ export default function ChatRoute() {
                   <Mic size={14} />
                 </button>
                 {isStreaming ? (
-                  <button onClick={stopStreaming} title="Stop generating"
+                  <button onClick={handleStopStreaming} title="Stop generating"
                     className="w-8 h-8 flex items-center justify-center bg-[#141415] border border-white/[0.08] text-[#F2F0EB] rounded-full hover:bg-[#1C1C20] transition-all duration-150">
                     <Square size={13} fill="currentColor" />
                   </button>

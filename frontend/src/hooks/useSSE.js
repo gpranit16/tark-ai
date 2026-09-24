@@ -29,9 +29,16 @@ export function useSSE() {
       onToolResult,
       onToolError,
       // Phase 10 Deep Research callbacks (optional)
+      onResearchClassifying,
       onResearchStarted,
+      onResearchQueriesGenerated,
+      onResearchSearchStarted,
+      onResearchSearchCompleted,
+      onResearchSourcesDeduplicated,
       onResearchPlanning,
       onResearchPlanCreated,
+      onResearchSectionStarted,
+      onResearchSectionCompleted,
       onResearchTaskStarted,
       onResearchTaskProgress,
       onResearchTaskCompleted,
@@ -41,6 +48,8 @@ export function useSSE() {
       onResearchVerificationComplete,
       onResearchRetry,
       onResearchSynthesisStarted,
+      onResearchImageStarted,
+      onResearchImageCompleted,
       onResearchCitation,
       onResearchComplete,
       onResearchCancelled,
@@ -89,6 +98,7 @@ export function useSSE() {
       const decoder = new TextDecoder();
       let buffer = '';
       let currentEvent = 'message';
+      let receivedComplete = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -109,7 +119,10 @@ export function useSSE() {
               // Standard events
               if (currentEvent === 'message_start' && onMessageStart) onMessageStart(data);
               else if (currentEvent === 'text_delta' && onTextDelta) onTextDelta(data);
-              else if (currentEvent === 'message_complete' && onMessageComplete) onMessageComplete(data);
+              else if ((currentEvent === 'message_complete' || currentEvent === 'message_end') && onMessageComplete) {
+                receivedComplete = true;
+                onMessageComplete(data);
+              }
               else if (currentEvent === 'error' && onError) onError(new Error(data.detail || data.message || 'Stream error'));
               // Phase 7 RAG events
               else if (currentEvent === 'retrieval_started' && onRetrievalStarted) onRetrievalStarted(data);
@@ -128,9 +141,16 @@ export function useSSE() {
               else if (currentEvent === 'tool_result' && onToolResult) onToolResult(data);
               else if (currentEvent === 'tool_error' && onToolError) onToolError(data);
               // Phase 10 Deep Research events
+              else if (currentEvent === 'research_classifying' && onResearchClassifying) onResearchClassifying(data);
               else if (currentEvent === 'research_started' && onResearchStarted) onResearchStarted(data);
+              else if (currentEvent === 'research_queries_generated' && onResearchQueriesGenerated) onResearchQueriesGenerated(data);
+              else if (currentEvent === 'research_search_started' && onResearchSearchStarted) onResearchSearchStarted(data);
+              else if (currentEvent === 'research_search_completed' && onResearchSearchCompleted) onResearchSearchCompleted(data);
+              else if (currentEvent === 'research_sources_deduplicated' && onResearchSourcesDeduplicated) onResearchSourcesDeduplicated(data);
               else if (currentEvent === 'research_planning' && onResearchPlanning) onResearchPlanning(data);
               else if (currentEvent === 'research_plan_created' && onResearchPlanCreated) onResearchPlanCreated(data);
+              else if (currentEvent === 'research_section_started' && onResearchSectionStarted) onResearchSectionStarted(data);
+              else if (currentEvent === 'research_section_completed' && onResearchSectionCompleted) onResearchSectionCompleted(data);
               else if (currentEvent === 'research_task_started' && onResearchTaskStarted) onResearchTaskStarted(data);
               else if (currentEvent === 'research_task_progress' && onResearchTaskProgress) onResearchTaskProgress(data);
               else if (currentEvent === 'research_task_completed' && onResearchTaskCompleted) onResearchTaskCompleted(data);
@@ -140,6 +160,8 @@ export function useSSE() {
               else if (currentEvent === 'research_verification_complete' && onResearchVerificationComplete) onResearchVerificationComplete(data);
               else if (currentEvent === 'research_retry' && onResearchRetry) onResearchRetry(data);
               else if (currentEvent === 'research_synthesis_started' && onResearchSynthesisStarted) onResearchSynthesisStarted(data);
+              else if (currentEvent === 'research_image_started' && onResearchImageStarted) onResearchImageStarted(data);
+              else if (currentEvent === 'research_image_completed' && onResearchImageCompleted) onResearchImageCompleted(data);
               else if (currentEvent === 'research_citation' && onResearchCitation) onResearchCitation(data);
               else if (currentEvent === 'research_complete' && onResearchComplete) onResearchComplete(data);
               else if (currentEvent === 'research_cancelled' && onResearchCancelled) onResearchCancelled(data);
@@ -161,9 +183,14 @@ export function useSSE() {
           }
         }
       }
+
+      if (!receivedComplete && onMessageComplete) {
+        onMessageComplete({ content: '' });
+      }
     } catch (err) {
       if (err.name === 'AbortError') {
         console.log('[SSE] Stream aborted by user');
+        if (callbacks.onAbort) callbacks.onAbort();
       } else {
         console.error('[SSE] Error:', err);
         setError(err.message);
