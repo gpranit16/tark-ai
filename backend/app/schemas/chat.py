@@ -24,4 +24,8 @@ class ChatRequest(BaseModel):
         default=False,
         description="Temporary chat mode - disables long-term memory recording.",
     )
+    web_search: Optional[bool] = Field(
+        default=False,
+        description="Explicit flag indicating web search is requested by the user.",
+    )
 

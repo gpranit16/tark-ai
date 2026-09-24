@@ -17,7 +17,11 @@ from app.tools.base import BaseTool, ToolExecutionContext, ToolPermission, ToolR
 
 logger = logging.getLogger(__name__)
 
-FRESHNESS_KEYWORDS = {"latest", "recent", "today", "news", "current", "breaking", "update", "updates", "now", "this week", "this month", "2026"}
+FRESHNESS_KEYWORDS = {
+    "latest", "recent", "today", "news", "current", "breaking", "update", "updates",
+    "now", "this week", "this month", "2025", "2026", "score", "winner", "match",
+    "price", "ceo", "release", "released", "announcement"
+}
 
 
 import httpx
@@ -34,6 +38,7 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
 
     def __init__(self, api_key: Optional[str] = None):
         self.api_key = api_key
+        self.last_answer: Optional[str] = None
 
     def _get_api_key(self) -> Optional[str]:
         if self.api_key:
@@ -44,8 +49,10 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
             return os.environ.get("TAVILY_API_KEY")
 
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+        self.last_answer = None
         api_key = self._get_api_key()
         if not api_key:
+            logger.debug("Tavily API key not found; skipping Tavily search provider.")
             return []
 
         lower_q = query.lower()
@@ -64,10 +71,11 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
             payload["days"] = 7
 
         try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
+            async with httpx.AsyncClient(timeout=7.0) as client:
                 resp = await client.post("https://api.tavily.com/search", json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
+                    self.last_answer = data.get("answer")
                     results: List[Dict[str, Any]] = []
                     for item in data.get("results", [])[:max_results]:
                         pub_date = item.get("published_date")
@@ -78,7 +86,10 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                             "published_date": pub_date,
                             "source": "tavily",
                         })
+                    logger.info("Tavily returned %d results for query: %r (has_answer=%s)", len(results), query[:50], bool(self.last_answer))
                     return results
+                else:
+                    logger.warning("Tavily search returned status %d: %s", resp.status_code, resp.text[:200])
         except Exception as exc:
             logger.warning("Tavily search provider failed: %s", exc)
         return []
@@ -194,17 +205,33 @@ class DuckDuckGoWebSearchProvider(BaseWebSearchProvider):
 
 
 class CompositeWebSearchEngine(BaseWebSearchProvider):
-    """Multi-tiered search engine attempting Google News RSS, Tavily, and DuckDuckGo."""
+    """Multi-tiered search engine prioritizing Tavily AI, with Google News RSS and DuckDuckGo fallbacks."""
 
     def __init__(self):
+        self.tavily = TavilyWebSearchProvider()
+        self.google_news = GoogleNewsRSSWebProvider()
+        self.duckduckgo = DuckDuckGoWebSearchProvider()
         self.providers: List[BaseWebSearchProvider] = [
-            GoogleNewsRSSWebProvider(),
-            TavilyWebSearchProvider(),
-            DuckDuckGoWebSearchProvider(),
+            self.tavily,
+            self.google_news,
+            self.duckduckgo,
         ]
 
+    @property
+    def last_answer(self) -> Optional[str]:
+        return self.tavily.last_answer
+
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-        for provider in self.providers:
+        # 1. Primary: Tavily AI Search (rich citations + direct AI answer)
+        try:
+            results = await self.tavily.search(query, max_results=max_results)
+            if results:
+                return results
+        except Exception as e:
+            logger.warning("Primary Tavily search failed: %s", e)
+
+        # 2. Fallbacks: Google News RSS and DuckDuckGo
+        for provider in [self.google_news, self.duckduckgo]:
             try:
                 results = await provider.search(query, max_results=max_results)
                 if results:
@@ -245,7 +272,14 @@ class WebSearchTool(BaseTool):
         self.provider = provider or CompositeWebSearchEngine()
 
     async def execute(self, arguments: dict[str, Any], context: ToolExecutionContext) -> ToolResult:
-        query = str(arguments.get("query", "")).strip()
+        query = str(
+            arguments.get("query")
+            or arguments.get("input")
+            or arguments.get("q")
+            or arguments.get("search_query")
+            or (arguments.get("parameters", {}).get("query") if isinstance(arguments.get("parameters"), dict) else "")
+            or ""
+        ).strip()
         if not query:
             return ToolResult(
                 tool_name=self.name,
@@ -260,6 +294,12 @@ class WebSearchTool(BaseTool):
         try:
             results = await self.provider.search(query, max_results=max_results)
             now_iso = datetime.now(timezone.utc).isoformat()
+            direct_answer = getattr(self.provider, "last_answer", None)
+            if not direct_answer and hasattr(self.provider, "providers"):
+                for p in getattr(self.provider, "providers", []):
+                    if getattr(p, "last_answer", None):
+                        direct_answer = p.last_answer
+                        break
 
             if not results:
                 return ToolResult(
@@ -267,6 +307,7 @@ class WebSearchTool(BaseTool):
                     success=True,
                     data={
                         "query": query,
+                        "direct_answer": direct_answer,
                         "count": 0,
                         "results": [],
                         "retrieved_at": now_iso,
@@ -275,16 +316,20 @@ class WebSearchTool(BaseTool):
                     source="web_search_engine",
                 )
 
+            is_tavily = any(r.get("source") == "tavily" for r in results)
+            source_label = "tavily" if is_tavily else "live_web_search"
+
             return ToolResult(
                 tool_name=self.name,
                 success=True,
                 data={
                     "query": query,
+                    "direct_answer": direct_answer,
                     "count": len(results),
                     "retrieved_at": now_iso,
                     "results": results,
                 },
-                source="live_web_search",
+                source=source_label,
             )
         except Exception as exc:
             logger.exception("WebSearchTool execution error: %s", exc)

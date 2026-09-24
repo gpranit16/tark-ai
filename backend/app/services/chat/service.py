@@ -199,6 +199,7 @@ class ChatService:
                     model=payload.model,
                     context=tool_context,
                     is_disconnected=is_disconnected,
+                    web_search=getattr(payload, "web_search", False),
                 ):
                     yield sse_chunk
 

@@ -74,6 +74,10 @@ class RAGRouter:
 
         content_lower = content.lower().strip()
 
+        # Web search toggle takes precedence over passive thread document mentions
+        if "[web search enabled]" in content_lower:
+            return False
+
         # Document reference phrase detection (e.g., "in this document", "the pdf", etc.)
         for pattern in _COMPILED_DOC_PATTERNS:
             if pattern.search(content_lower):

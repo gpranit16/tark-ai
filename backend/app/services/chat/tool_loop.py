@@ -86,11 +86,19 @@ def format_tools_system_prompt(
         f"- Current Local Date (Today): {current_date_str} (Time: {current_time_str}, Timezone: Asia/Kolkata +05:30).",
         f"- Tomorrow's Date: {tomorrow_date_str}.",
         f"- Current UTC Time: {now_utc.strftime('%Y-%m-%d %H:%M:%S UTC')}.",
-        "- When answering questions about latest events, news, or current facts, ALWAYS execute `search_news` or `web_search`.",
+        "- When answering questions about latest events, news, or current facts, ALWAYS execute `web_search` or `search_news`.",
         "- Strictly use the verified publication dates, URLs, and source titles returned in the tool response. Do not invent or synthesize past/stale dates.",
         "",
         "## TOOL CALLING INSTRUCTIONS",
-        "1. When you need external facts, recent news, calculations, weather, financial prices, or workspace memories/documents, ALWAYS call the appropriate tool.",
+        "1. LIVE WEB SEARCH & REAL-TIME FACT GROUNDING (TAVILY):",
+        "   - You have access to real-time live web search powered by Tavily AI via `web_search`.",
+        "   - When the user asks you to search (e.g. 'search for...', 'search the web for...', 'google...', 'search karo...'), OR asks about any current developments, recent 2025/2026 events, breaking news, live scores, stock prices, or external facts:",
+        "     * You MUST ALWAYS invoke `<tool_call>{\"name\": \"web_search\", \"arguments\": {\"query\": \"<search query>\"}}</tool_call>` as your immediate response.",
+        "   - When synthesizing results, cite verified sources as markdown links: `[Source Title](URL)` and include the direct answer if available.",
+        "   - NEVER claim that you do not have internet access or cannot browse the live web — you DO have live web access via `web_search`.",
+        "",
+        "2. OTHER TOOLS & CALCULATIONS:",
+        "   - When you need calculations, weather, financial prices, or workspace memories/documents, ALWAYS call the appropriate tool.",
     ])
 
     if has_calendar:
@@ -226,6 +234,9 @@ def _clean_tool_params(params: Any) -> Dict[str, Any]:
     if "arguments" in params and isinstance(params["arguments"], dict):
         nested = params.pop("arguments")
         params = {**nested, **params}
+    if "input" in params and isinstance(params["input"], dict):
+        nested = params.pop("input")
+        params = {**nested, **params}
 
     return params
 
@@ -294,7 +305,7 @@ def parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
             try:
                 parsed = json.loads(json_match.group(1))
                 name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-                params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments")
+                params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or parsed.get("input")
                 if params is None:
                     params = {k: v for k, v in parsed.items() if k not in ("name", "tool", "function")}
                 params = _clean_tool_params(params)
@@ -528,6 +539,75 @@ def is_conversational_query(content: str) -> bool:
     return bool(_CONVERSATIONAL_PATTERNS.match(stripped))
 
 
+def detect_web_search_intent(
+    content: str,
+    web_search_flag: bool = False,
+) -> Tuple[bool, str]:
+    """Detect if a query requires or explicitly requests live web search.
+    
+    Returns (should_search: bool, clean_search_query: str).
+    """
+    stripped = content.strip()
+    if not stripped:
+        return False, ""
+
+    # 1. Explicit Web Search button enabled or [Web Search Enabled] tag
+    if web_search_flag or "[web search enabled]" in stripped.lower():
+        clean = _re.sub(
+            r"\[web search enabled\](?:\s*please\s+search\s+the\s+web\s+for\s+(?:the\s+)?latest\s+information\s+about:?)?",
+            "",
+            stripped,
+            flags=_re.IGNORECASE,
+        ).strip()
+        return True, clean or stripped
+
+    # 2. Explicit search commands (English and Hinglish)
+    explicit_patterns = [
+        r"^(?:please\s+)?(?:web\s+)?search\s+(?:the\s+web\s+for|the\s+internet\s+for|online\s+for|for|about|tavily\s+for)?\s+(.+)$",
+        r"^(?:please\s+)?(?:google|tavily|bing|ddg)\s+(?:search\s+)?(?:for\s+|about\s+)?(.+)$",
+        r"^(?:please\s+)?look\s+up\s+(?:on\s+(?:the\s+)?web\s+)?(.+?)(?:\s+on\s+(?:the\s+)?web|\s+online)?$",
+        r"^(?:please\s+)?find\s+(?:online|on\s+the\s+web)\s+(.+)$",
+        r"^(?:search\s+karo|search\s+kro|khojo|google\s+karo|web\s+pe\s+search\s+karo|internet\s+pe\s+search\s+karo)\s+(.+)$",
+        r"^(.+?)\s+(?:search\s+karo|search\s+kro|khojo|search\s+karke\s+batao|google\s+karo|web\s+pe\s+search\s+karo)$",
+    ]
+
+    for pat in explicit_patterns:
+        m = _re.match(pat, stripped, flags=_re.IGNORECASE)
+        if m:
+            q = m.group(1).strip()
+            q = _re.sub(r"^(?:about|for|regarding)\s+", "", q, flags=_re.IGNORECASE).strip()
+            if q:
+                return True, q
+
+    # 3. Guardrails: Exclude queries clearly meant for internal tools, coding, math, or greetings
+    lower = stripped.lower()
+    if is_conversational_query(stripped):
+        return False, ""
+    if any(lower.startswith(p) for p in [
+        "write code", "write a python", "write a script", "create a function",
+        "def ", "class ", "how to code", "solve ", "calculate ", "plot ", "implement "
+    ]):
+        return False, ""
+    if any(p in lower for p in [
+        "my schedule", "my calendar", "add task", "create task", "my tasks",
+        "what did i eat", "remind me", "check calendar"
+    ]):
+        return False, ""
+
+    # 4. Implicit intent - Real-world freshness, live facts, and recent developments
+    freshness_indicators = [
+        r"\b(latest|recent|today'?s?|yesterday'?s?|breaking|now|this\s+week|this\s+month|new\s+release|update|updates|announcement|2025|2026)\b",
+        r"\b(who\s+is\s+(?:the\s+)?(?:current|new|present)\b|who\s+won\b|current\s+(?:price|status|ceo|prime\s+minister|president)|stock\s+price|crypto\s+price|weather\s+in|match\s+score|election\s+result|release\s+date\s+of)\b",
+        r"\b(deepseek|qwen\s*2\.5|claude\s*3\.7|gemini\s*2|gpt-4\.5|gpt-5|llama\s*3\.[123]|rtx\s*50\d0|starship\s*flight|artemis)\b",
+    ]
+
+    for pat in freshness_indicators:
+        if _re.search(pat, lower):
+            return True, stripped
+
+    return False, ""
+
+
 class ToolCallOrchestrator:
     """Manages the model -> tool -> result -> final answer execution loop."""
 
@@ -551,6 +631,7 @@ class ToolCallOrchestrator:
         model: Optional[str] = None,
         context: ToolExecutionContext,
         is_disconnected,
+        web_search: bool = False,
     ) -> AsyncIterator[str]:
         """
         Execute iterative tool calling loop:
@@ -560,15 +641,20 @@ class ToolCallOrchestrator:
         4. If tool call is requested, execute tool, emit tool SSE events, append result to context.
         5. Repeat until model produces final answer or max iterations reached.
         """
-        # Fast-path: bypass all tool infrastructure for pure conversational messages.
-        # This avoids a DB round-trip for integrations, the GitHub token lookup, and
-        # injecting the full tool-schema block (~3 KB) into the context.
         last_user_content = ""
         for msg in reversed(messages):
             if msg.role == MessageRole.USER:
                 last_user_content = msg.content or ""
                 break
-        if is_conversational_query(last_user_content):
+
+        # Check for web search intent (button enabled, explicit search command, or live fact query)
+        should_web_search, search_query = detect_web_search_intent(
+            last_user_content,
+            web_search_flag=web_search,
+        )
+
+        # Fast-path for pure conversational messages (only if web search was not triggered)
+        if not should_web_search and is_conversational_query(last_user_content):
             logger.info("ToolLoop fast-path: conversational query detected, skipping tool infrastructure")
             latest_sel = None
             async for selection, event in self.router.stream(
@@ -585,6 +671,85 @@ class ToolCallOrchestrator:
                 if event.delta:
                     yield text_delta(event.delta)
             return
+
+        # Direct Web Search execution path when intent / button / command was detected
+        if should_web_search and search_query:
+            logger.info("ToolLoop proactive web search triggered for: %r", search_query[:60])
+            tools_catalog = [t for t in self.registry.get_catalog() if t.get("name") == "web_search"]
+            if tools_catalog:
+                yield tool_available(tools_catalog)
+
+            yield tool_started("web_search", {"query": search_query})
+
+            search_result: ToolResult = await self.executor.execute(
+                tool_name="web_search",
+                arguments={"query": search_query},
+                context=context,
+            )
+
+            yield tool_result_event(
+                tool_name="web_search",
+                success=search_result.success,
+                data=search_result.data,
+                source=search_result.source or "tavily",
+            )
+
+            if not search_result.success:
+                yield tool_error_event("web_search", search_result.error or "Search execution failed")
+
+            tool_resp_str = (
+                f'<tool_response tool="web_search" status="{"success" if search_result.success else "error"}">\n'
+                f'{json.dumps(search_result.data, default=str)}\n'
+                f'</tool_response>'
+            )
+
+            synthesis_directive = (
+                "\n\n[STRICT SYNTHESIS DIRECTIVE - TAVILY WEB SEARCH]:\n"
+                "- You have retrieved fresh live web results via Tavily.\n"
+                "- Curate an accurate, up-to-date, comprehensive, and clearly structured answer in clean markdown.\n"
+                "- Use the direct answer and search result snippets to explain the facts accurately.\n"
+                "- Cite verified sources using clickable markdown links in the format [Source Title](URL).\n"
+                "- Do NOT output any `<tool_call>` tags, JSON tool objects, or XML tool markup.\n"
+                "- Keep the tone helpful, objective, and well-structured."
+            )
+
+            cur_messages = list(messages)
+            # Clean any [Web Search Enabled] prefix in user messages
+            for idx in range(len(cur_messages) - 1, -1, -1):
+                if cur_messages[idx].role == MessageRole.USER:
+                    cleaned_u = _re.sub(
+                        r"\[web search enabled\](?:\s*please\s+search\s+the\s+web\s+for\s+(?:the\s+)?latest\s+information\s+about:?)?",
+                        "",
+                        cur_messages[idx].content,
+                        flags=_re.IGNORECASE,
+                    ).strip()
+                    if cleaned_u:
+                        cur_messages[idx] = NormalizedMessage(role=MessageRole.USER, content=cleaned_u)
+                    break
+
+            cur_messages.append(
+                NormalizedMessage(
+                    role=MessageRole.USER,
+                    content=f"{tool_resp_str}{synthesis_directive}",
+                )
+            )
+
+            latest_sel = None
+            async for selection, event in self.router.stream(
+                messages=cur_messages,
+                mode=mode,
+                provider=provider,
+                model=model,
+            ):
+                if latest_sel is None:
+                    latest_sel = selection
+                    yield message_start(selection.provider_name, selection.model, mode, selection.fallback_used)
+                if await is_disconnected():
+                    return
+                if event.delta:
+                    yield text_delta(event.delta)
+            return
+
         # Determine user integration status for personal tools (e.g. Google Calendar)
         has_calendar = False
         can_write_calendar = False

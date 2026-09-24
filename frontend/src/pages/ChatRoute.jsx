@@ -564,6 +564,7 @@ export default function ChatRoute() {
 
     const payload = {
       content: finalMessage,
+      web_search: webSearchEnabled,
       provider,
       model,
       mode,

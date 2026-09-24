@@ -50,12 +50,12 @@ class NewsSearchTool(BaseTool):
             return ToolResult(tool_name=self.name, success=False, error="Query is required.")
 
         try:
-            # 1. Primary: Real-time Google News RSS Search (Guaranteed fresh publication dates)
-            articles = await self._fetch_google_news_rss(query, max_results)
+            # 1. Primary: Tavily AI News Search if key is available
+            articles = await self._fetch_tavily_news(query, max_results)
 
-            # 2. Secondary: Tavily Search if Google News RSS returned empty
+            # 2. Secondary: Real-time Google News RSS Search
             if not articles:
-                articles = await self._fetch_tavily_news(query, max_results)
+                articles = await self._fetch_google_news_rss(query, max_results)
 
             # 3. Tertiary fallback: DuckDuckGo News
             if not articles:
