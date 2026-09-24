@@ -150,9 +150,9 @@ export default function AuthPage({ initialMode }) {
   };
 
   return (
-    <div className="relative min-h-screen w-full bg-[#050505] text-[#F2F0EB] flex flex-col justify-between font-sans select-none overflow-x-hidden">
+    <div className="relative min-h-screen w-full bg-[#050505] text-[#F2F0EB] flex flex-col justify-between font-sans select-none overflow-x-hidden overflow-y-auto">
       {/* Top Header / Branding */}
-      <header className="w-full px-6 sm:px-12 lg:px-16 pt-8 sm:pt-10 flex items-center justify-between z-20">
+      <header className="w-full px-4 sm:px-8 lg:px-16 pt-5 sm:pt-8 flex items-center justify-between z-20">
         <div className="flex items-center gap-2.5">
           <div className="h-7 w-7 rounded-lg bg-gradient-to-br from-[#C9A86A] to-[#8C6D37] p-[1px] shadow-[0_0_15px_rgba(201,168,106,0.2)]">
             <div className="h-full w-full bg-[#050505] rounded-[6px] flex items-center justify-center">
@@ -167,9 +167,9 @@ export default function AuthPage({ initialMode }) {
       </header>
 
       {/* Main Split Layout: Viewport Composition without Giant Card */}
-      <main className="w-full flex-1 max-w-7xl mx-auto px-6 sm:px-12 lg:px-16 py-6 sm:py-10 flex flex-col lg:flex-row items-center justify-center gap-10 lg:gap-16 z-10">
+      <main className="w-full flex-1 max-w-7xl mx-auto px-4 sm:px-8 lg:px-16 py-4 sm:py-8 lg:py-10 flex flex-col lg:flex-row items-center justify-center gap-6 sm:gap-10 lg:gap-16 z-10">
         {/* ── LEFT ~42%: INTERACTIVE HUMAN CHARACTER ─────────────────── */}
-        <div className="w-full lg:w-[42%] flex flex-col items-center justify-center relative">
+        <div className="w-full lg:w-[42%] flex flex-col items-center justify-center relative shrink-0">
           <InteractiveAuthCharacter
             focusedField={focusedField}
             isPasswordVisible={focusedField === 'confirmPassword' ? showConfirmPassword : showPassword}
@@ -183,11 +183,11 @@ export default function AuthPage({ initialMode }) {
         <div className="w-full lg:w-[58%] max-w-md flex flex-col justify-center">
           {/* Top Switcher Tabs (Only for login / signup) */}
           {authMode !== 'forgot' && (
-            <div className="inline-flex p-1 rounded-xl bg-[#0B0B0B] border border-white/[0.06] mb-8 self-start">
+            <div className="inline-flex p-1 rounded-xl bg-[#0B0B0B] border border-white/[0.06] mb-6 sm:mb-8 self-start">
               <button
                 type="button"
                 onClick={() => switchMode('login')}
-                className={`relative px-4 py-1.5 text-xs font-medium tracking-wide transition-colors duration-200 rounded-lg ${
+                className={`relative px-3.5 sm:px-4 py-1.5 text-[11px] sm:text-xs font-medium tracking-wide transition-colors duration-200 rounded-lg ${
                   authMode === 'login' ? 'text-[#F2F0EB]' : 'text-[#74716C] hover:text-[#A3A09A]'
                 }`}
               >
@@ -204,7 +204,7 @@ export default function AuthPage({ initialMode }) {
               <button
                 type="button"
                 onClick={() => switchMode('signup')}
-                className={`relative px-4 py-1.5 text-xs font-medium tracking-wide transition-colors duration-200 rounded-lg ${
+                className={`relative px-3.5 sm:px-4 py-1.5 text-[11px] sm:text-xs font-medium tracking-wide transition-colors duration-200 rounded-lg ${
                   authMode === 'signup' ? 'text-[#F2F0EB]' : 'text-[#74716C] hover:text-[#A3A09A]'
                 }`}
               >
@@ -321,10 +321,10 @@ export default function AuthPage({ initialMode }) {
               >
                 {/* Heading & Subtitle */}
                 <div>
-                  <h1 className="text-3xl sm:text-4xl font-medium tracking-tight text-[#F2F0EB]">
+                  <h1 className="text-2xl xs:text-3xl sm:text-4xl font-medium tracking-tight text-[#F2F0EB]">
                     {authMode === 'login' ? 'Welcome back.' : 'Get started with TARK AI.'}
                   </h1>
-                  <p className="text-sm text-[#A3A09A] mt-2">
+                  <p className="text-xs sm:text-sm text-[#A3A09A] mt-1.5 sm:mt-2">
                     {authMode === 'login' ? 'Sign in to continue to TARK AI.' : 'Create your account and make TARK AI yours.'}
                   </p>
                 </div>
@@ -521,7 +521,7 @@ export default function AuthPage({ initialMode }) {
       </main>
 
       {/* Subtle Footer */}
-      <footer className="w-full px-6 sm:px-12 lg:px-16 pb-8 text-center text-xs text-[#74716C]/50 z-20">
+      <footer className="w-full px-4 sm:px-8 lg:px-16 pb-4 sm:pb-8 text-center text-[11px] sm:text-xs text-[#74716C]/50 z-20">
         TARK AI &middot; End-to-End Encrypted Session
       </footer>
     </div>

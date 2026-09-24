@@ -2,7 +2,8 @@ import { create } from 'zustand';
 
 export const useAppStore = create((set, get) => ({
   // UI State
-  isSidebarOpen: true,
+  isSidebarOpen: typeof window !== 'undefined' ? window.innerWidth >= 768 : true,
+  setIsSidebarOpen: (open) => set({ isSidebarOpen: open }),
   toggleSidebar: () => set((state) => ({ isSidebarOpen: !state.isSidebarOpen })),
   
   isContextPanelOpen: false,

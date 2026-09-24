@@ -250,7 +250,7 @@ export default function InteractiveAuthCharacter({
   return (
     <div
       ref={containerRef}
-      className="relative w-full max-w-[380px] sm:max-w-[440px] lg:max-w-[480px] aspect-[4/5] flex items-center justify-center select-none pointer-events-none"
+      className="relative w-full max-w-[190px] xs:max-w-[230px] sm:max-w-[320px] md:max-w-[380px] lg:max-w-[460px] aspect-[4/5] flex items-center justify-center select-none pointer-events-none mx-auto"
     >
       {/* ── BACKGROUND AMBIENT GLOW ─────────────────────────────── */}
       <motion.div
@@ -263,7 +263,7 @@ export default function InteractiveAuthCharacter({
       />
 
       {/* ── TOP EDITORIAL GREETING (CENTERED DIRECTLY ABOVE ROBOT HEAD) ─── */}
-      <div className="absolute top-1 sm:top-2 lg:top-2.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none whitespace-nowrap flex justify-center">
+      <div className="absolute top-0 sm:top-1 lg:top-2.5 left-1/2 -translate-x-1/2 z-20 pointer-events-none whitespace-nowrap flex justify-center">
         <AnimatePresence mode="wait">
           <motion.div
             key={greetingText.title}
@@ -271,12 +271,12 @@ export default function InteractiveAuthCharacter({
             animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
             exit={{ opacity: 0, y: -4, filter: 'blur(3px)' }}
             transition={{ duration: 0.3, ease: [0.22, 1, 0.36, 1] }}
-            className="flex items-center gap-2.5 select-none"
+            className="flex items-center gap-1.5 sm:gap-2.5 select-none"
           >
-            <span className="text-[#E5C378] text-base sm:text-lg leading-none drop-shadow-[0_0_10px_rgba(201,168,106,0.45)]">
+            <span className="text-[#E5C378] text-sm sm:text-base lg:text-lg leading-none drop-shadow-[0_0_10px_rgba(201,168,106,0.45)]">
               {greetingText.symbol}
             </span>
-            <span className="font-serif italic text-xl sm:text-2xl lg:text-[23px] font-normal tracking-wide bg-gradient-to-r from-[#FFF8E7] via-[#E8C87E] to-[#C9A86A] bg-clip-text text-transparent drop-shadow-[0_2px_14px_rgba(201,168,106,0.28)]">
+            <span className="font-serif italic text-base sm:text-xl lg:text-[23px] font-normal tracking-wide bg-gradient-to-r from-[#FFF8E7] via-[#E8C87E] to-[#C9A86A] bg-clip-text text-transparent drop-shadow-[0_2px_14px_rgba(201,168,106,0.28)]">
               {greetingText.title}
             </span>
           </motion.div>

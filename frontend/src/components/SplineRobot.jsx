@@ -87,7 +87,7 @@ function SplineRobot({ className = '' }) {
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <svg
           viewBox="0 0 300 300"
-          className="w-[280px] h-[280px] xl:w-[320px] xl:h-[320px] text-accent/15 animate-orbit-slow"
+          className="w-[180px] h-[180px] xs:w-[220px] xs:h-[220px] sm:w-[280px] sm:h-[280px] xl:w-[320px] xl:h-[320px] text-accent/15 animate-orbit-slow"
           fill="none"
         >
           {/* Orbital Circle 1 */}
@@ -132,7 +132,7 @@ function SplineRobot({ className = '' }) {
 
       {/* 3D Spline Canvas */}
       <div
-        className="w-[216px] h-[270px] sm:w-[243px] sm:h-[306px] lg:w-[279px] lg:h-[351px] xl:w-[315px] xl:h-[396px] 2xl:w-[342px] 2xl:h-[423px] relative transition-opacity duration-700 ease-out overflow-hidden"
+        className="w-[140px] h-[175px] xs:w-[170px] xs:h-[215px] sm:w-[240px] sm:h-[300px] lg:w-[279px] lg:h-[351px] xl:w-[315px] xl:h-[396px] 2xl:w-[342px] 2xl:h-[423px] relative transition-opacity duration-700 ease-out overflow-hidden"
         style={{
           opacity: isLoaded ? 1 : 0,
           maskImage: 'radial-gradient(ellipse 65% 65% at 50% 46%, rgba(0,0,0,1) 35%, rgba(0,0,0,0.65) 60%, rgba(0,0,0,0) 88%)',

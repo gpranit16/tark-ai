@@ -10,7 +10,7 @@ import { threadApi } from '../api/threadApi';
 import { fileApi } from '../api/fileApi';
 import { settingsApi } from '../api/settingsApi';
 import { useSSE } from '../hooks/useSSE';
-import { Send, Square, Globe, EyeOff, ShieldAlert, Sparkles, Code2, Brain, Loader2, FileText, BookOpen, Database, Image as ImageIcon, HardDrive, Cloud, Mic, RotateCcw } from 'lucide-react';
+import { Send, Square, Globe, EyeOff, ShieldAlert, Sparkles, Code2, Brain, Loader2, FileText, BookOpen, Database, Image as ImageIcon, HardDrive, Cloud, Mic, RotateCcw, Menu, PanelLeft } from 'lucide-react';
 import clsx from 'clsx';
 import 'highlight.js/styles/atom-one-dark.css';
 import FileUploader from '../components/chat/FileUploader';
@@ -167,6 +167,8 @@ export default function ChatRoute() {
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
 
   const toggleContextPanel = useAppStore((s) => s.toggleContextPanel);
+  const isSidebarOpen = useAppStore((s) => s.isSidebarOpen);
+  const toggleSidebar = useAppStore((s) => s.toggleSidebar);
   const mode = useAppStore((s) => s.mode);
   const model = useAppStore((s) => s.model);
   const provider = useAppStore((s) => s.provider);
@@ -1026,15 +1028,23 @@ export default function ChatRoute() {
       {isNewChat && <TarkAmbientBackground mode={mode} />}
 
       {/* Header */}
-      <header className="h-14 border-b border-white/[0.05] flex items-center justify-between px-5 shrink-0 bg-[#000000]/95 backdrop-blur-sm z-10">
-        <div className="flex items-center gap-3 truncate max-w-md">
+      <header className="h-14 border-b border-white/[0.05] flex items-center justify-between px-3 sm:px-5 shrink-0 bg-[#000000]/95 backdrop-blur-sm z-10 gap-2">
+        <div className="flex items-center gap-2 sm:gap-3 truncate min-w-0">
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            className="p-1.5 rounded-lg border border-white/[0.06] bg-[#101011] hover:bg-[#141415] hover:border-white/[0.15] text-[#A0A0A0] hover:text-[#F4F2ED] transition-colors shrink-0 cursor-pointer"
+            title={isSidebarOpen ? "Collapse sidebar" : "Open sidebar"}
+          >
+            <Menu size={16} />
+          </button>
           <h1 className="text-[13px] font-semibold text-[#F4F2ED] tracking-[-0.01em] truncate">
             {threadLoading ? 'Loading…' : threadData?.title || (threadId ? 'Chat' : 'New Chat')}
           </h1>
           {mode === 'coding' && (
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-accent/10 border border-accent/25 text-accent rounded-full text-[11px] font-semibold shrink-0">
               <Code2 size={11} />
-              <span>Coding</span>
+              <span className="hidden sm:inline">Coding</span>
             </span>
           )}
           {activeProject && (
@@ -1044,19 +1054,19 @@ export default function ChatRoute() {
               title="View project workspace"
             >
               <span>{activeProject.avatar || '📁'}</span>
-              <span className="truncate max-w-[140px]">{activeProject.name}</span>
+              <span className="truncate max-w-[90px] sm:max-w-[140px]">{activeProject.name}</span>
             </button>
           )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
           {/* Clear / Reset Chat Button */}
           <button
             onClick={handleResetChat}
             title="Clear current chat and start a new conversation"
-            className="text-[11px] px-2.5 py-1 rounded-lg border border-white/[0.06] bg-[#101011] hover:bg-[#141415] hover:border-white/[0.15] text-[#A0A0A0] hover:text-[#F4F2ED] transition-all font-medium flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+            className="text-[11px] px-2 sm:px-2.5 py-1 rounded-lg border border-white/[0.06] bg-[#101011] hover:bg-[#141415] hover:border-white/[0.15] text-[#A0A0A0] hover:text-[#F4F2ED] transition-all font-medium flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
           >
             <RotateCcw size={12} className="text-[#A0A0A0]" />
-            <span>Clear Chat</span>
+            <span className="hidden xs:inline">Clear</span>
           </button>
 
           {isAuthenticated ? (
@@ -1065,33 +1075,33 @@ export default function ChatRoute() {
                 onClick={() => setIsTemporaryChat(!isTemporaryChat)}
                 title={isTemporaryChat ? "Temporary chat enabled: memory writing disabled" : "Enable temporary chat (incognito memory)"}
                 className={clsx(
-                  "text-[11px] px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all font-medium",
+                  "text-[11px] px-2 sm:px-2.5 py-1 rounded-lg border flex items-center gap-1.5 transition-all font-medium",
                   isTemporaryChat
                     ? "bg-amber-500/10 border-amber-500/30 text-amber-300/90"
                     : "border-white/[0.06] bg-[#101011] hover:bg-[#141415] text-[#A0A0A0] hover:text-[#F4F2ED]"
                 )}
               >
                 <EyeOff size={12} />
-                <span>{isTemporaryChat ? 'Incognito On' : 'Incognito'}</span>
+                <span className="hidden sm:inline">{isTemporaryChat ? 'Incognito On' : 'Incognito'}</span>
               </button>
               <button
                 onClick={toggleContextPanel}
-                className="text-[11px] px-2.5 py-1 rounded-lg border border-white/[0.06] bg-[#101011] hover:bg-[#141415] text-[#A0A0A0] hover:text-[#F4F2ED] transition-all font-medium"
+                className="text-[11px] px-2 sm:px-2.5 py-1 rounded-lg border border-white/[0.06] bg-[#101011] hover:bg-[#141415] text-[#A0A0A0] hover:text-[#F4F2ED] transition-all font-medium"
               >
                 Context
               </button>
             </>
           ) : (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1.5 sm:gap-2">
               <button
                 onClick={() => navigate('/login')}
-                className="text-xs font-medium text-[#A0A0A0] hover:text-[#F4F2ED] px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
+                className="text-xs font-medium text-[#A0A0A0] hover:text-[#F4F2ED] px-2.5 sm:px-3 py-1.5 rounded-lg transition-colors cursor-pointer"
               >
                 Sign in
               </button>
               <button
                 onClick={() => navigate('/signup')}
-                className="text-xs font-semibold text-black bg-[#C9A86A] hover:bg-[#E1C27A] px-3.5 py-1.5 rounded-lg transition-all shadow-[0_2px_10px_rgba(201,168,106,0.15)] cursor-pointer"
+                className="text-xs font-semibold text-black bg-[#C9A86A] hover:bg-[#E1C27A] px-3 sm:px-3.5 py-1.5 rounded-lg transition-all shadow-[0_2px_10px_rgba(201,168,106,0.15)] cursor-pointer"
               >
                 Get started
               </button>
@@ -1117,18 +1127,23 @@ export default function ChatRoute() {
       )}
 
       {/* Message area */}
-      <div className={clsx("flex-1 overflow-y-auto px-4 py-4 relative z-10 flex flex-col scrollbar-thin", isNewChat ? "justify-center" : "justify-start")}>
+      <div className={clsx("flex-1 overflow-y-auto px-2 sm:px-4 py-4 relative z-10 flex flex-col scrollbar-thin")}>
         {isNewChat ? (
-          <div className="relative flex items-center justify-center min-h-[calc(100vh-14rem)] max-w-7xl mx-auto w-full px-4 py-4 gap-0 lg:gap-8">
+          <div className="relative my-auto flex flex-col lg:flex-row items-center justify-center max-w-7xl mx-auto w-full px-2 sm:px-4 py-4 gap-3 sm:gap-6 lg:gap-8">
             {/* Hero ambient atmospheric glow */}
             <div className="hero-ambient" aria-hidden="true" />
+
+            {/* Mobile/Tablet Centered 3D Spline Robot Assistant Mascot */}
+            <div className="flex lg:hidden flex-col items-center justify-center pointer-events-none select-none my-1 shrink-0">
+              <SplineRobot />
+            </div>
 
             {/* Hero Main Content — Left Column */}
             <div className="flex-1 flex flex-col items-center lg:items-start justify-center text-center lg:text-left w-full max-w-full lg:max-w-[780px] xl:max-w-[840px] min-w-0 z-10 animate-fade-up">
               {/* Dynamic Time-based Greeting */}
-              <div className="inline-flex items-center gap-2 select-none mb-4 sm:mb-4.5">
+              <div className="inline-flex items-center gap-2 select-none mb-3 sm:mb-4.5">
                 <span className="w-[5px] h-[5px] rounded-full bg-accent animate-subtle-pulse shrink-0" />
-                <span className="text-[15px] sm:text-[15.5px] font-semibold tracking-[-0.01em] text-[#D8D4CC]">
+                <span className="text-[14px] sm:text-[15.5px] font-semibold tracking-[-0.01em] text-[#D8D4CC]">
                   {(() => {
                     const hr = new Date().getHours();
                     const greet =
@@ -1154,20 +1169,20 @@ export default function ChatRoute() {
               </div>
 
               {/* Hero Title & Tagline */}
-              <div className="space-y-2.5 sm:space-y-3 mb-6 sm:mb-7">
-                <h1 className="text-[32px] sm:text-[42px] md:text-[50px] lg:text-[54px] xl:text-[64px] 2xl:text-[68px] font-medium tracking-[-0.035em] text-[#E8E5DF] leading-[1.02] sm:whitespace-nowrap">
+              <div className="space-y-1.5 sm:space-y-3 mb-5 sm:mb-7">
+                <h1 className="text-[28px] xs:text-[34px] sm:text-[42px] md:text-[50px] lg:text-[54px] xl:text-[64px] 2xl:text-[68px] font-medium tracking-[-0.035em] text-[#E8E5DF] leading-[1.05] sm:whitespace-nowrap">
                   How can I help you{' '}
                   <span className="font-serif-italic text-accent inline-block">
                     today?
                   </span>
                 </h1>
-                <p className="text-[#9B9892] text-[14.5px] sm:text-[15.5px] font-normal tracking-[0.01em]">
+                <p className="text-[#9B9892] text-[13.5px] sm:text-[15.5px] font-normal tracking-[0.01em]">
                   Think deeper. Build smarter.
                 </p>
               </div>
 
               {/* 6 Suggestion Action Cards in 3x2 Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5 w-full">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-2.5 w-full">
                 {[
                   {
                     icon: BookOpen,
@@ -1230,19 +1245,19 @@ export default function ChatRoute() {
                           }, 10);
                         }
                       }}
-                      className="action-card group relative bg-[#0B0B0B] hover:bg-[#121212] border border-white/[0.05] hover:border-accent/30 rounded-[18px] p-4 text-left cursor-pointer hover:shadow-[0_8px_32px_rgba(0,0,0,0.45),0_2px_12px_rgba(201,168,106,0.06)] flex flex-col gap-2 min-h-[88px] animate-fade-up overflow-hidden"
+                      className="action-card group relative bg-[#0B0B0B] hover:bg-[#121212] border border-white/[0.05] hover:border-accent/30 rounded-[18px] p-3 sm:p-4 text-left cursor-pointer hover:shadow-[0_8px_32px_rgba(0,0,0,0.45),0_2px_12px_rgba(201,168,106,0.06)] flex flex-col gap-1.5 sm:gap-2 min-h-[76px] sm:min-h-[88px] animate-fade-up overflow-hidden"
                     >
                       {/* Very subtle champagne left accent on hover */}
                       <div className="absolute left-0 top-[22%] bottom-[22%] w-[2px] bg-accent/0 group-hover:bg-accent/40 rounded-full transition-all duration-200" />
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2 sm:gap-2.5">
                         <div className={clsx("text-[#77736D] group-hover:text-accent transition-colors duration-150 shrink-0", c.microClass)}>
                           <Icon size={14} strokeWidth={1.75} />
                         </div>
-                        <div className="text-[14px] font-editorial font-[450] text-[#F2F0EB] group-hover:text-white tracking-[-0.018em] leading-[1.25] transition-colors duration-150">
+                        <div className="text-[13.5px] sm:text-[14px] font-editorial font-[450] text-[#F2F0EB] group-hover:text-white tracking-[-0.018em] leading-[1.25] transition-colors duration-150">
                           {c.title}
                         </div>
                       </div>
-                      <div className="text-[12.5px] font-normal text-[#A3A09A] leading-[1.5] line-clamp-2 pl-[24px]">
+                      <div className="text-[11.5px] sm:text-[12.5px] font-normal text-[#A3A09A] leading-[1.4] sm:leading-[1.5] line-clamp-2 pl-[22px] sm:pl-[24px]">
                         {c.desc}
                       </div>
                     </button>

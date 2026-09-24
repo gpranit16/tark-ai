@@ -37,6 +37,7 @@ import clsx from 'clsx';
 
 export default function Sidebar() {
   const isSidebarOpen = useAppStore((state) => state.isSidebarOpen);
+  const setIsSidebarOpen = useAppStore((state) => state.setIsSidebarOpen);
   const activeThreadId = useAppStore((state) => state.activeThreadId);
   const activeProjectId = useAppStore((state) => state.activeProjectId);
   const activeProject = useAppStore((state) => state.activeProject);
@@ -44,6 +45,12 @@ export default function Sidebar() {
   const { user, logout, isAuthenticated } = useAuthStore();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  const closeMobileSidebar = () => {
+    if (typeof window !== 'undefined' && window.innerWidth < 768) {
+      setIsSidebarOpen(false);
+    }
+  };
 
   const [showProjectPicker, setShowProjectPicker] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -192,8 +199,6 @@ export default function Sidebar() {
     }
   };
 
-  if (!isSidebarOpen) return null;
-
   const navItems = [
     { name: 'My Space', path: '/my-space', icon: Sparkles },
     { name: 'Projects', path: '/projects', icon: Folder },
@@ -258,6 +263,7 @@ export default function Sidebar() {
           <>
             <NavLink
               to={`/chat/${thread.id}`}
+              onClick={closeMobileSidebar}
               className={({ isActive }) =>
                 clsx(
                   'flex items-center gap-2 px-2.5 py-2 text-[12px] transition-colors duration-150 truncate flex-1 min-w-0 rounded-lg',
@@ -380,17 +386,49 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="w-64 h-full border-r border-white/[0.05] bg-[#060607] flex flex-col flex-shrink-0 relative select-none">
-      {/* Logo */}
-      <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.05] min-h-[58px]">
-        <Link to="/" className="flex items-center group transition-all duration-300">
-          <img
-            src="/tark-logo.png"
-            alt="TARK AI"
-            className="h-9 w-auto max-w-[176px] object-contain filter drop-shadow-[0_0_18px_rgba(214,181,106,0.32)] group-hover:drop-shadow-[0_0_28px_rgba(214,181,106,0.55)] transition-all duration-300 select-none pointer-events-none"
-          />
-        </Link>
-      </div>
+    <>
+      {/* Mobile Backdrop Overlay */}
+      {isSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/80 backdrop-blur-sm z-40 md:hidden transition-opacity duration-300"
+          onClick={() => setIsSidebarOpen(false)}
+          aria-hidden="true"
+        />
+      )}
+
+      <aside
+        className={clsx(
+          "h-full border-r border-white/[0.05] bg-[#060607] flex flex-col flex-shrink-0 select-none transition-transform duration-300 ease-in-out",
+          // Mobile: Slide-over Drawer
+          "fixed inset-y-0 left-0 z-50 w-72 max-w-[85vw] shadow-2xl",
+          isSidebarOpen ? "translate-x-0" : "-translate-x-full",
+          // Desktop: Inline flex child
+          "md:static md:w-64 md:shadow-none md:translate-x-0",
+          !isSidebarOpen && "md:hidden"
+        )}
+      >
+        {/* Logo & Mobile Close Button */}
+        <div className="px-4 py-3.5 flex items-center justify-between border-b border-white/[0.05] min-h-[58px]">
+          <Link
+            to="/"
+            onClick={closeMobileSidebar}
+            className="flex items-center group transition-all duration-300"
+          >
+            <img
+              src="/tark-logo.png"
+              alt="TARK AI"
+              className="h-9 w-auto max-w-[176px] object-contain filter drop-shadow-[0_0_18px_rgba(214,181,106,0.32)] group-hover:drop-shadow-[0_0_28px_rgba(214,181,106,0.55)] transition-all duration-300 select-none pointer-events-none"
+            />
+          </Link>
+          <button
+            type="button"
+            onClick={() => setIsSidebarOpen(false)}
+            className="md:hidden p-1.5 rounded-lg text-[#77736D] hover:text-[#F2F0EB] hover:bg-white/[0.05] transition-colors cursor-pointer"
+            title="Close sidebar"
+          >
+            <X size={18} />
+          </button>
+        </div>
 
       {/* Workspace Selector */}
       <div className="px-3 py-2.5 border-b border-white/[0.05] relative">
@@ -720,5 +758,6 @@ export default function Sidebar() {
       {/* Profile & Account Modal */}
       <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} />
     </aside>
+    </>
   );
 }
