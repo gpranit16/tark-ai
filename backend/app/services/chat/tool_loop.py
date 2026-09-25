@@ -45,6 +45,7 @@ def format_tools_system_prompt(
     allowed_tools: Optional[List[str]] = None,
     has_calendar: bool = False,
     has_github: bool = False,
+    github_username: Optional[str] = None,
 ) -> str:
     """Format tools definition for the system prompt with context-aware tool guidance."""
     tools = registry.list_tools()
@@ -147,26 +148,46 @@ def format_tools_system_prompt(
     ])
 
     if has_github:
+        user_mention = f" (Authenticated GitHub Account: @{github_username})" if github_username else ""
         lines.extend([
             "4. GITHUB MCP & REPOSITORY INTEGRATION (REAL REPOSITORIES & ACTIONS):",
-            "   - GitHub IS connected for this user.",
-            "   - You have tools to search repos, read files/code, inspect issues, pull requests, commits, branches, and GitHub Actions.",
-            "   - When the user asks to analyze, explain, or inspect a repository structure or what a project does (e.g. 'Analyze my iot-bin repo', 'What does this project do?'):",
-            "     * You MUST ALWAYS invoke `<tool_call>{\"name\": \"github_get_file_contents\", \"arguments\": {\"repo\": \"<repo_name>\", \"path\": \"\"}}</tool_call>` as your immediate action to fetch directory tree and files.",
-            "   - When the user asks to search repositories, inspect repos, read code/files, check issues/PRs/commits, or check GitHub workflows:",
-            "     * You MUST ALWAYS invoke the respective GitHub tool (e.g. `github_search_repositories`, `github_get_file_contents`, `github_list_issues`, `github_list_pull_requests`, `github_list_commits`, `github_list_branches`, `github_list_workflows`).",
+            f"   - GitHub IS connected for this user{user_mention}.",
+            "   - You have access to tools for repositories, files, issues, pull requests, commits, branches, and GitHub Actions.",
+            "   - LISTING USER REPOSITORIES:",
+            "     * When the user asks 'What are my repositories?', 'Show my repos', 'List my repositories', 'What repos do I have on GitHub?', or asks in Hindi/Hinglish (e.g. 'mere repos kya hai', 'mere repo dikhao', 'mere repositories'):",
+            "       You MUST ALWAYS invoke `<tool_call>{\"name\": \"github_list_user_repositories\", \"arguments\": {}}</tool_call>` as your immediate action.",
+            "     * DO NOT call `github_get_repository` with generic words like 'repositories' or 'repos'.",
+            "     * DO NOT ask the user for their username or token, because their GitHub account is ALREADY connected!",
+            "   - FILE READING & CREATING/UPDATING FILES ON GITHUB:",
+            "     * When the user asks to read, inspect, or show a file (e.g. 'Show README.md of iot-bin', 'Read package.json in smarrtbin'):",
+            "       Invoke `<tool_call>{\"name\": \"github_get_file_contents\", \"arguments\": {\"repo\": \"<repo_name>\", \"path\": \"<file_path>\"}}</tool_call>`.",
+            "     * When the user asks to update, edit, modify, add lines to, or create a file in a GitHub repo (e.g. 'Update README.md of iot-bin', 'Add line to README', 'Commit and push changes', 'Push update', 'repo me README create/update karo'):",
+            "       You MUST invoke `github_create_or_update_file` directly! DO NOT call `web_search` and DO NOT just provide text instructions on how to use git terminal.",
+            "       Step 1: Execute `<tool_call>{\"name\": \"github_create_or_update_file\", \"arguments\": {\"repo\": \"<repo_name>\", \"path\": \"<file_path>\", \"content\": \"<new_or_updated_content>\", \"message\": \"<commit_message>\"}}</tool_call>`. (Leave confirmed=false).",
+            "       Step 2: When the tool returns `requires_confirmation`, summarize the proposed changes clearly to the user and ask for their confirmation.",
+            "       Step 3: When the user confirms (e.g. 'yes', 'do it', 'you only commit and do', 'push it', 'proceed'), execute `<tool_call>{\"name\": \"github_create_or_update_file\", \"arguments\": {\"repo\": \"<repo_name>\", \"path\": \"<file_path>\", \"content\": \"<new_or_updated_content>\", \"message\": \"<commit_message>\", \"confirmed\": true}}</tool_call>`.",
+            "     * NEVER claim you cannot push, commit, or update files on GitHub — you DO have full write and commit access via `github_create_or_update_file`!",
+            "   - STRICT ROUTING BOUNDARY (ZERO FALSE INVOCATIONS):",
+            "     * ONLY call GitHub tools when the user specifically requests interactions with a real GitHub repository, issue, PR, commit, branch, or workflow.",
+            "     * STRICT PROHIBITION: You are STRICTLY FORBIDDEN from calling GitHub tools for general programming questions, writing code snippets, explaining algorithms, or debugging code. Answer those directly in the chat with markdown code blocks!",
+            "     * NEVER call `github_search_repositories` unless the user explicitly asks to search/find repositories on GitHub.",
+            "   - REPOSITORY INSPECTION:",
+            "     * When the user asks to analyze, explain, or inspect a repository structure (e.g. 'Analyze my iot-bin repo', 'What files are in pallets/flask?'):",
+            "       Invoke `<tool_call>{\"name\": \"github_get_file_contents\", \"arguments\": {\"repo\": \"<repo_name>\", \"path\": \"\"}}</tool_call>`.",
             "   - CRITICAL SAFETY CONFIRMATION ON WRITE/DESTRUCTIVE ACTIONS:",
             "     * All write operations (`github_create_or_update_file`, `github_delete_file`, `github_create_issue`, `github_add_issue_comment`, `github_create_pull_request`, `github_merge_pull_request`, `github_create_branch`, `github_dispatch_workflow`, `github_create_repository`) REQUIRE explicit user confirmation.",
             "     * When you execute a write tool without 'confirmed': true, the tool will return a `requires_confirmation` response.",
-            "     * When you receive `requires_confirmation`, summarize the proposed changes to the user and ASK for their explicit approval.",
-            "     * ONLY when the user explicitly approves, re-execute the tool with 'confirmed': true.",
-            "   - ZERO-HALLUCINATION RULE: Never guess repository contents, file SHA, branches, or issue numbers without querying GitHub.",
+            "     * When you receive `requires_confirmation`, summarize the proposed changes to the user and ASK for their explicit approval. Stop calling tools in that turn.",
+            "     * ONLY when the user explicitly approves in a subsequent message, re-execute the tool with 'confirmed': true.",
+            "   - ZERO-HALLUCINATION & ANTI-LOOP RULE:",
+            "     * Never guess repository contents, file SHA, branches, or issue numbers without querying GitHub.",
+            "     * If a repository or file is not found (404), STOP calling tools immediately and inform the user. Do NOT retry or make repeated calls in a loop.",
         ])
     else:
         lines.extend([
             "4. GITHUB MCP STATUS:",
             "   - GitHub is NOT connected for this user.",
-            "   - If the user asks about GitHub repositories, issues, PRs, or code files, inform them: 'GitHub is not connected. You can configure your GITHUB_PERSONAL_ACCESS_TOKEN in .env or connect under Settings -> Personal -> Connections.'",
+            "   - If the user asks to perform GitHub operations on repositories, issues, PRs, or code files, inform them: 'GitHub is not connected. You can configure your GITHUB_PERSONAL_ACCESS_TOKEN in .env or connect under Settings -> Personal -> Connections.'",
         ])
 
     lines.extend([
@@ -447,9 +468,11 @@ def strip_think_markup(text: str, strip_whitespace: bool = False) -> str:
 
 def strip_tool_call_markup(text: str, strip_whitespace: bool = False) -> str:
     """Remove all tool call markup, XML tags, bare tool JSONs, and thinking tags so only clean response remains."""
-    cleaned = re.sub(r"<tool_call>[\s\S]*?(?:</tool_call>|(?=<tool_call>)|\Z)", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"`*<tool_call>[\s\S]*?</tool_call>`*", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"<tool_call>[\s\S]*?(?:</tool_call>|(?=<tool_call>)|\Z)", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"`*<function_call>[\s\S]*?</function_call>`*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"<function_call>[\s\S]*?(?:</function_call>|(?=<function_call>)|\Z)", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"<function=[^>]+>[\s\S]*?(?:</function>|(?=<function=)|\Z)", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"`*<function=[^>]+>[\s\S]*?(?:</function>|(?=<function=)|\Z)`*", "", cleaned, flags=re.IGNORECASE)
     cleaned = JSON_CODEBLOCK_TOOL_REGEX.sub("", cleaned)
     cleaned = strip_think_markup(cleaned, strip_whitespace=strip_whitespace)
 
@@ -539,9 +562,217 @@ def is_conversational_query(content: str) -> bool:
     return bool(_CONVERSATIONAL_PATTERNS.match(stripped))
 
 
+_PRONOUN_PATTERN = _re.compile(
+    r"\b(he|she|it|they|his|her|its|their|him|them)\b",
+    _re.IGNORECASE,
+)
+
+_SEARCH_SUFFIX_PATTERN = _re.compile(
+    r"\s+(?:search\s+latest|search\s+now|search\s+online|search\s+karo|search\s+kro|khojo|google\s+karo|search\s+karke\s+batao|search\s+pe|online\s+search|find\s+online|on\s+the\s+web|search)\s*$",
+    _re.IGNORECASE,
+)
+
+_SEARCH_PREFIX_PATTERN = _re.compile(
+    r"^(?:please\s+)?(?:web\s+)?(?:search\s+(?:the\s+web\s+for|the\s+internet\s+for|online\s+for|for|about|pe)?|google\s+(?:for|about)?|look\s+up\s+(?:for|about)?|find\s+(?:out\s+about)?)\s*",
+    _re.IGNORECASE,
+)
+
+
+def extract_primary_subject_from_history(messages: Optional[List[NormalizedMessage]]) -> str:
+    """Extract the primary named entity or subject from recent conversation messages."""
+    if not messages:
+        return ""
+
+    for msg in reversed(messages[-6:]):
+        content = (msg.content or "").strip()
+        if not content:
+            continue
+
+        # 1. User questions like "who is <Subject>" or "tell me about <Subject>"
+        m = _re.search(
+            r"\b(?:who\s+is|what\s+is|tell\s+me\s+about|know\s+about)\s+([A-Za-z0-9\s\.\-]{2,40})",
+            content,
+            _re.IGNORECASE,
+        )
+        if m:
+            subj = m.group(1).strip()
+            subj = _re.sub(r"[\?\.\,\!\;]+$", "", subj).strip()
+            subj = _re.sub(r"^(?:the|a|an)\s+", "", subj, flags=_re.IGNORECASE).strip()
+            if subj and len(subj) > 2 and subj.lower() not in {"this", "that", "it", "he", "she"}:
+                return subj
+
+        # 2. Assistant message opening, e.g. "Virat Kohli is an Indian..."
+        if msg.role == MessageRole.ASSISTANT:
+            m_cap = _re.search(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)", content)
+            if m_cap:
+                return m_cap.group(1).strip()
+
+        # 3. Capitalized proper nouns
+        proper_nouns = _re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b", content)
+        for pn in proper_nouns:
+            if pn.lower() not in {"google calendar", "google news", "tark ai", "duckduckgo", "united states"}:
+                return pn.strip()
+
+    return ""
+
+
+def contextualize_search_query(
+    raw_query: str,
+    messages: Optional[List[NormalizedMessage]] = None,
+) -> str:
+    """Clean search directives and resolve pronouns from conversation history."""
+    query = raw_query.strip()
+    if not query:
+        return ""
+
+    # 1. Strip leading and trailing search meta-commands
+    query = _SEARCH_PREFIX_PATTERN.sub("", query).strip()
+    query = _SEARCH_SUFFIX_PATTERN.sub("", query).strip()
+
+    # Strip question filler like "what are", "what is", "can you tell me"
+    query = _re.sub(
+        r"^(?:what\s+are\s+|what\s+is\s+|can\s+you\s+tell\s+me\s+|tell\s+me\s+|how\s+many\s+)",
+        "",
+        query,
+        flags=_re.IGNORECASE,
+    ).strip()
+    query = query.rstrip("?").strip()
+
+    # 2. Check if query contains pronouns or is a dependent fragment
+    has_pronouns = bool(_PRONOUN_PATTERN.search(query))
+    is_fragment = (
+        len(query.split()) <= 4
+        and not any(ch.isupper() for ch in query)
+        and any(
+            w in query.lower()
+            for w in [
+                "centuries", "runs", "stats", "price", "age", "height", "wife",
+                "records", "ceo", "net worth", "score", "matches", "family", "born"
+            ]
+        )
+    )
+
+    if (has_pronouns or is_fragment) and messages:
+        subject = extract_primary_subject_from_history(messages)
+        if subject:
+            if has_pronouns:
+                query = _PRONOUN_PATTERN.sub(subject, query)
+            elif is_fragment:
+                query = f"{subject} {query}"
+
+    return query.strip() or raw_query.strip()
+
+
+def detect_github_intent(
+    content: str,
+    messages: Optional[List[NormalizedMessage]] = None,
+) -> bool:
+    """Accurately identify if the user's query requires GitHub tool interactions.
+
+    Returns False for general coding questions, algorithms, conceptual git questions,
+    and conversational chit-chat to prevent unnecessary tool pollution and infinite loops.
+    """
+    stripped = content.strip()
+    if not stripped:
+        return False
+
+    lower = stripped.lower()
+
+    # 1. Quick exclusion for greetings and conversational chit-chat
+    if is_conversational_query(stripped):
+        return False
+
+    # 2. Strong exclusion for general code generation, algorithms, and debugging
+    general_coding_patterns = [
+        r"^(?:please\s+)?write\s+(?:a\s+|some\s+)?(?:python|javascript|typescript|c\+\+|java|rust|go|react|html|css|sql|bash|code|script|function|program|class)\b",
+        r"^(?:please\s+)?how\s+to\s+(?:code|implement|build|use|write)\b",
+        r"^(?:please\s+)?create\s+(?:a\s+)?(?:component|function|class|script|program)\b",
+        r"^(?:please\s+)?implement\s+(?:a\s+|an\s+)?(?:algorithm|function|class|method)\b",
+        r"^(?:please\s+)?(?:explain|what\s+is|how\s+does)\s+(?:git\s+rebase|git\s+merge|git\s+commit|git\s+push|git\s+pull|git\s+branch)\b",
+        r"^(?:please\s+)?solve\s+(?:this\s+)?(?:leetcode|problem|equation|bug|issue\s+in\s+my\s+code)\b",
+        r"^(?:please\s+)?debug\s+(?:this|my\s+code)\b",
+    ]
+    is_general_coding = any(_re.search(pat, lower) for pat in general_coding_patterns)
+    if is_general_coding and not any(k in lower for k in ("github", "github.com", "gh repo")):
+        return False
+
+    # 3. Direct GitHub intent indicators
+    if any(k in lower for k in ("github", "github.com", "gh repo")):
+        return True
+
+    # Hindi / Hinglish intent indicators
+    hinglish_github_indicators = [
+        "mera repo", "mere repo", "meri repo", "mera repos", "mere repos", "meri repos",
+        "meri repository", "mere repositories", "mera repository", "mere repository",
+        "repo dikhao", "repos dikhao", "repos batao", "repo batao",
+        "repos list", "repo list", "github pe", "github par",
+        "commit karo", "push karo", "repo me update", "file update karo",
+    ]
+    if any(k in lower for k in hinglish_github_indicators):
+        return True
+
+    # Shorthand repository references like "owner/repo" combined with repo actions
+    has_owner_repo = bool(_re.search(r"\b[A-Za-z0-9_.\-]+/[A-Za-z0-9_.\-]+\b", stripped))
+    repo_actions = [
+        "repo", "repository", "issue", "issues", "pr", "prs", "pull request",
+        "pull requests", "commit", "commits", "branch", "branches", "workflow", "workflows",
+        "readme", "clone", "update", "push", "write", "modify",
+    ]
+    if has_owner_repo and any(act in lower for act in repo_actions):
+        return True
+
+    # Flexible regex patterns for repository actions and queries
+    repo_action_regexes = [
+        r"\b(?:create|open|add|file|list|get|show|close|update|edit|write|push|modify|commit|delete|remove)\s+(?:an?\s+)?(?:issue|pr|pull\s+request|branch|commit|workflow|file|readme|line)\b",
+        r"\b(?:update|edit|modify|create|write)\s+(?:the\s+)?(?:readme|file|code)\b",
+        r"\b(?:push|commit)\s+(?:the\s+)?(?:changes?|code|update|file|commits?)\b",
+        r"\b(?:commit|push)\s+(?:and\s+)?(?:do|update|push)\b",
+        r"\b(?:merge|close)\s+(?:the\s+|this\s+)?(?:pr|pull\s+request)\b",
+        r"\b(?:repo|repository)\s+[A-Za-z0-9_.\-]+\b",
+        r"\b[A-Za-z0-9_.\-]+\s+(?:repo|repository)\b",
+        r"\b(?:what|show|list|get|display|view|fetch)\s+(?:are\s+)?(?:all\s+)?(?:the\s+)?(?:my\s+)?repos(?:itories)?\b",
+        r"\b(?:my\s+repos?|my\s+repositories|search\s+repos?|search\s+repositories|list\s+repos?|list\s+repositories|create\s+repo|create\s+repository)\b",
+        r"\b(?:dispatch|trigger|run)\s+(?:a\s+|the\s+)?(?:workflow|action|actions|ci)\b",
+        r"\b(?:workflow\s+runs?|workflow\s+status|github\s+actions?)\b",
+        r"\b(?:files?\s+in\s+(?:the\s+)?repo|repo\s+files?|repo\s+structure|repository\s+structure)\b",
+        r"\b[\w\-.]+\.(?:json|md|py|js|ts|html|yml|yaml|env|toml|txt)\s+(?:of|in|from)\s+[A-Za-z0-9_.\-]+\b",
+        r"\b(?:show|view|get|read|open|cat)\s+[\w\-.]+\.(?:json|md|py|js|ts|html|yml|yaml|env|toml)\b",
+        r"\b(?:commits?\s+(?:on|in)|branches?\s+(?:in|of))\b",
+    ]
+    if any(_re.search(pat, lower) for pat in repo_action_regexes):
+        return True
+
+    # 4. Multi-turn context check: Follow-up questions referencing recent GitHub interaction
+    if messages:
+        recent_has_github = False
+        for msg in reversed(messages[-6:]):
+            c = (msg.content or "").lower()
+            if any(marker in c for marker in [
+                "github", "github.com", "tool=\"github_", "name\": \"github_",
+                "repo", "repository", "commit", "push", "branch", "pr", "pull request", "issue", "iot-bin", "readme"
+            ]):
+                recent_has_github = True
+                break
+
+        if recent_has_github:
+            follow_up_tokens = [
+                "issues", "issue", "prs", "pr", "pull request", "pull requests",
+                "commits", "commit", "branches", "branch", "workflows", "files",
+                "readme", "structure", "merge", "open one", "create one", "details",
+                "update", "edit", "write", "push", "change", "modify", "save", "add",
+                "yes", "ha", "haan", "sure", "proceed", "confirm", "approve", "do it",
+                "kardo", "commit and do", "push and update", "from here", "please do", "only commit",
+            ]
+            if any(tok in lower for tok in follow_up_tokens) or len(stripped.split()) <= 5:
+                return True
+
+    return False
+
+
 def detect_web_search_intent(
     content: str,
     web_search_flag: bool = False,
+    messages: Optional[List[NormalizedMessage]] = None,
 ) -> Tuple[bool, str]:
     """Detect if a query requires or explicitly requests live web search.
     
@@ -559,7 +790,8 @@ def detect_web_search_intent(
             stripped,
             flags=_re.IGNORECASE,
         ).strip()
-        return True, clean or stripped
+        cleaned_query = contextualize_search_query(clean or stripped, messages)
+        return True, cleaned_query or clean or stripped
 
     # 2. Explicit search commands (English and Hinglish)
     explicit_patterns = [
@@ -568,7 +800,7 @@ def detect_web_search_intent(
         r"^(?:please\s+)?look\s+up\s+(?:on\s+(?:the\s+)?web\s+)?(.+?)(?:\s+on\s+(?:the\s+)?web|\s+online)?$",
         r"^(?:please\s+)?find\s+(?:online|on\s+the\s+web)\s+(.+)$",
         r"^(?:search\s+karo|search\s+kro|khojo|google\s+karo|web\s+pe\s+search\s+karo|internet\s+pe\s+search\s+karo)\s+(.+)$",
-        r"^(.+?)\s+(?:search\s+karo|search\s+kro|khojo|search\s+karke\s+batao|google\s+karo|web\s+pe\s+search\s+karo)$",
+        r"^(.+?)\s+(?:search\s+karo|search\s+kro|khojo|search\s+karke\s+batao|google\s+karo|web\s+pe\s+search\s+karo|search\s+latest|latest\s+search|search\s+online|online\s+search)$",
     ]
 
     for pat in explicit_patterns:
@@ -577,11 +809,14 @@ def detect_web_search_intent(
             q = m.group(1).strip()
             q = _re.sub(r"^(?:about|for|regarding)\s+", "", q, flags=_re.IGNORECASE).strip()
             if q:
-                return True, q
+                cleaned_query = contextualize_search_query(q, messages)
+                return True, cleaned_query or q
 
-    # 3. Guardrails: Exclude queries clearly meant for internal tools, coding, math, or greetings
+    # 3. Guardrails: Exclude queries clearly meant for internal tools, GitHub operations, coding, math, or greetings
     lower = stripped.lower()
     if is_conversational_query(stripped):
+        return False, ""
+    if detect_github_intent(stripped, messages=messages):
         return False, ""
     if any(lower.startswith(p) for p in [
         "write code", "write a python", "write a script", "create a function",
@@ -603,7 +838,8 @@ def detect_web_search_intent(
 
     for pat in freshness_indicators:
         if _re.search(pat, lower):
-            return True, stripped
+            cleaned_query = contextualize_search_query(stripped, messages)
+            return True, cleaned_query or stripped
 
     return False, ""
 
@@ -651,6 +887,7 @@ class ToolCallOrchestrator:
         should_web_search, search_query = detect_web_search_intent(
             last_user_content,
             web_search_flag=web_search,
+            messages=messages,
         )
 
         # Fast-path for pure conversational messages (only if web search was not triggered)
@@ -704,11 +941,11 @@ class ToolCallOrchestrator:
             )
 
             synthesis_directive = (
-                "\n\n[STRICT SYNTHESIS DIRECTIVE - TAVILY WEB SEARCH]:\n"
-                "- You have retrieved fresh live web results via Tavily.\n"
-                "- Curate an accurate, up-to-date, comprehensive, and clearly structured answer in clean markdown.\n"
-                "- Use the direct answer and search result snippets to explain the facts accurately.\n"
+                "\n\n[STRICT SYNTHESIS DIRECTIVE - WEB SEARCH]:\n"
+                "- Answer the user's question directly, clearly, and comprehensively using the search results.\n"
+                "- Provide an accurate, well-structured answer in clean markdown with key statistics, career numbers, and facts highlighted.\n"
                 "- Cite verified sources using clickable markdown links in the format [Source Title](URL).\n"
+                "- CRITICAL: Never refuse to answer with statements like 'I was unable to find any information' or merely provide external links when the question is about well-known public figures, athletes, historical events, or established facts. Always provide the best, most accurate answer directly to the user.\n"
                 "- Do NOT output any `<tool_call>` tags, JSON tool objects, or XML tool markup.\n"
                 "- Keep the tone helpful, objective, and well-structured."
             )
@@ -777,14 +1014,20 @@ class ToolCallOrchestrator:
 
         # Determine GitHub MCP integration status
         has_github = False
+        github_username = None
         try:
             from app.services.integrations.github import get_github_service
             gh_service = get_github_service()
             gh_token = await gh_service.get_token_for_user(user_id=context.user_id, session=context.session)
             if gh_token:
                 has_github = True
+                status = await gh_service.get_status(user_id=context.user_id, session=context.session)
+                github_username = status.get("account_login")
         except Exception as gh_err:
             logger.warning("Failed checking GitHub status in tool loop: %s", gh_err)
+
+        # Check if current turn or thread context requires GitHub tools
+        is_github_relevant = detect_github_intent(last_user_content, messages=messages)
 
         # Build allowed tools list
         all_registered = [t.name for t in self.registry.list_tools()]
@@ -799,17 +1042,21 @@ class ToolCallOrchestrator:
         allowed_tools = list(all_registered)
         if not has_calendar:
             allowed_tools = [t for t in allowed_tools if t not in calendar_tool_names]
-        if not has_github:
+        if not has_github or not is_github_relevant:
             allowed_tools = [t for t in allowed_tools if t not in github_tool_names]
+        elif is_github_relevant and not web_search and not any(w in last_user_content.lower() for w in ["search the web", "google", "live search"]):
+            # When performing dedicated GitHub operations, exclude web search tools to focus the model on GitHub MCP
+            allowed_tools = [t for t in allowed_tools if t not in {"web_search", "search_news"}]
 
         # Safe diagnostic logging (Never logs tokens or credentials)
         user_prefix = str(context.user_id)[:8] + "..." if context.user_id else "anonymous"
         logger.info(
-            "ToolLoop initialized: user=%s, model=%s, has_calendar=%s, has_github=%s, tools_count=%d",
+            "ToolLoop initialized: user=%s, model=%s, has_calendar=%s, has_github=%s, gh_user=%s, tools_count=%d",
             user_prefix,
             model or "default",
             has_calendar,
             has_github,
+            github_username,
             len(allowed_tools),
         )
 
@@ -823,6 +1070,7 @@ class ToolCallOrchestrator:
             allowed_tools=allowed_tools,
             has_calendar=has_calendar,
             has_github=has_github,
+            github_username=github_username,
         )
         current_messages = list(messages)
 
@@ -843,6 +1091,8 @@ class ToolCallOrchestrator:
         max_iterations = min(self.settings.max_tool_calls, 5)
         iteration = 0
         latest_selection: Optional[ProviderSelection] = None
+        executed_tool_calls: set[tuple[str, str]] = set()
+        github_calls_count = 0
 
         # Pre-compute tool name tuple once — used inside the inner streaming loop.
         # Previously recomputed on every token delta (O(n_tools) per chunk).
@@ -996,11 +1246,30 @@ class ToolCallOrchestrator:
                         yield text_delta(clean_text)
                 return
 
-            # Tool calls detected! Execute each tool sequentially
+            # Tool calls detected! Execute each tool sequentially with loop & duplicate protection
             tool_responses: List[str] = []
+            break_after_this_turn = False
+
             for tool_name, tool_params in tool_calls:
                 if await is_disconnected():
                     return
+
+                # Duplicate tool call detection (Loop Breaker)
+                canonical_param_str = json.dumps(tool_params, sort_keys=True, default=str)
+                call_sig = (tool_name, canonical_param_str)
+                if call_sig in executed_tool_calls:
+                    logger.warning("ToolLoop: Duplicate tool call prevented: %s", tool_name)
+                    break_after_this_turn = True
+                    tool_responses.append(
+                        f'<tool_response tool="{tool_name}" status="error">\nError: Duplicate tool call. This exact tool call was already executed this turn. Stop calling tools and provide your final answer to the user.\n</tool_response>'
+                    )
+                    continue
+                executed_tool_calls.add(call_sig)
+
+                if tool_name.startswith("github_"):
+                    github_calls_count += 1
+                    if github_calls_count >= 2:
+                        break_after_this_turn = True
 
                 logger.info(
                     "ToolLoop executing tool: %s (params: %s)",
@@ -1029,6 +1298,9 @@ class ToolCallOrchestrator:
                     tool_responses.append(
                         f'<tool_response tool="{tool_name}" status="success">\n{json.dumps(result.data, default=str)}\n</tool_response>'
                     )
+                    # If this write tool requires user confirmation, stop loop immediately
+                    if isinstance(result.data, dict) and result.data.get("status") == "requires_confirmation":
+                        break_after_this_turn = True
                 else:
                     logger.warning("ToolLoop tool %s failed: %s", tool_name, result.error)
                     yield tool_result_event(
@@ -1042,6 +1314,21 @@ class ToolCallOrchestrator:
                     tool_responses.append(
                         f'<tool_response tool="{tool_name}" status="error">\nError: {result.error}\n</tool_response>'
                     )
+                    # Check for terminal errors where repeating is futile
+                    err_lower = str(result.error or "").lower()
+                    if any(term in err_lower for term in [
+                        "not connected",
+                        "authentication required",
+                        "authentication failed",
+                        "bad credentials",
+                        "rate limit exceeded",
+                        "permission denied",
+                        "resource not found",
+                        "could not be retrieved",
+                        "must be provided",
+                        "not found",
+                    ]):
+                        break_after_this_turn = True
 
             # Append model's raw tool call output to dialogue history
             current_messages.append(
@@ -1065,10 +1352,10 @@ class ToolCallOrchestrator:
                 "\n\n[STRICT SYNTHESIS DIRECTIVE]:\n"
                 "- Provide your final response in clean, user-friendly markdown.\n"
                 "- Do NOT output any `<tool_call>` tags, JSON tool objects, or XML tool markup.\n"
-                "- Base your response ONLY on the factual data returned in the tool response above.\n"
+                "- Ground your response in the factual data returned in the tool response above. If the tool is web_search or news and results are limited, supplement with accurate knowledge to directly answer the user's question rather than refusing.\n"
                 "- If listing items (repositories, tasks, calendar events, search results, issues, PRs): Format cleanly with bullet points, names, status, and concise details.\n"
-                "- If event_count or item count is 0 or empty: State clearly that there are no items found.\n"
-                "- If requires_confirmation is present: Clearly summarize the proposed write action and ask the user for explicit confirmation before proceeding."
+                "- If requires_confirmation is present: Clearly summarize the proposed write action and ask the user for explicit confirmation before proceeding.\n"
+                "- If a tool returned an error (such as repository not found or not connected): Explain the issue clearly and politely with helpful advice (e.g. check spelling or connect under Settings)."
             )
 
             current_messages.append(
@@ -1077,6 +1364,24 @@ class ToolCallOrchestrator:
                     content="\n\n".join(tool_responses) + synthesis_directive,
                 )
             )
+
+            # If a terminal error or safety confirmation was triggered, break immediately to final synthesis!
+            if break_after_this_turn:
+                logger.info("ToolLoop break_after_this_turn triggered. Emitting final synthesis directly.")
+                async for selection, event in self.router.stream(
+                    messages=current_messages,
+                    mode=mode,
+                    provider=provider,
+                    model=model,
+                ):
+                    if latest_selection is None or latest_selection.provider_name != selection.provider_name:
+                        latest_selection = selection
+                        yield message_start(selection.provider_name, selection.model, mode, selection.fallback_used)
+                    if await is_disconnected():
+                        return
+                    if event.delta:
+                        yield text_delta(event.delta)
+                return
 
         # If iteration limit reached, ask model for a final synthesis
         final_messages = list(current_messages) + [

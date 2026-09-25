@@ -58,8 +58,13 @@ class ChatService:
         thread_id: UUID,
         payload: ChatRequest,
         is_disconnected,
+        user_id: UUID | None = None,
     ) -> AsyncIterator[str]:
         thread = await get_thread_or_404(session, thread_id)
+        effective_user_id = user_id or thread.user_id
+        if thread.user_id is None and effective_user_id is not None:
+            thread.user_id = effective_user_id
+            session.add(thread)
         thread.updated_at = datetime.now(timezone.utc)
         attachments_data = await self._get_attachments(session, payload.file_ids)
         user_message = Message(
@@ -185,7 +190,7 @@ class ChatService:
                 from app.tools.base import ToolExecutionContext
 
                 tool_context = ToolExecutionContext(
-                    user_id=thread.user_id,
+                    user_id=effective_user_id,
                     project_id=thread.project_id,
                     thread_id=thread.id,
                     session=session,

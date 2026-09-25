@@ -26,6 +26,7 @@ import SplineRobot from '../components/SplineRobot';
 import TarkAssistantAvatar from '../components/chat/TarkAssistantAvatar';
 import ModeModelSelector from '../components/chat/ModeModelSelector';
 import VoiceModeModal from '../components/chat/VoiceModeModal';
+import ProfileModal from '../components/auth/ProfileModal';
 import { useVoiceSession } from '../hooks/useVoiceSession';
 
 const DEV_USER_ID = '00000000-0000-0000-0000-000000000001';
@@ -880,6 +881,7 @@ export default function ChatRoute() {
   }, [stopStreaming, mode]);
 
   const [isVoiceModeOpen, setIsVoiceModeOpen] = useState(false);
+  const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
 
   const voiceSession = useVoiceSession({
     isOpen: isVoiceModeOpen,
@@ -1090,6 +1092,22 @@ export default function ChatRoute() {
                 className="text-[11px] px-2 sm:px-2.5 py-1 rounded-lg border border-white/[0.06] bg-[#101011] hover:bg-[#141415] text-[#A0A0A0] hover:text-[#F4F2ED] transition-all font-medium"
               >
                 Context
+              </button>
+
+              {/* User Avatar & DP Quick Trigger */}
+              <button
+                type="button"
+                onClick={() => setIsProfileModalOpen(true)}
+                title="Manage Profile & DP"
+                className="h-7 w-7 sm:h-8 sm:w-8 rounded-lg bg-[#18181A] border border-[#C9A86A]/40 hover:border-[#C9A86A] overflow-hidden shrink-0 flex items-center justify-center transition-all cursor-pointer shadow-sm active:scale-95 ml-0.5"
+              >
+                {user?.avatar_url ? (
+                  <img src={user.avatar_url} alt={user?.name || 'User'} className="w-full h-full object-cover" />
+                ) : (
+                  <span className="text-[11px] sm:text-xs font-bold text-[#C9A86A]">
+                    {user?.name ? user.name[0].toUpperCase() : 'U'}
+                  </span>
+                )}
               </button>
             </>
           ) : (
@@ -1497,6 +1515,11 @@ export default function ChatRoute() {
         mode={mode}
         model={model}
         provider={provider}
+      />
+
+      <ProfileModal
+        isOpen={isProfileModalOpen}
+        onClose={() => setIsProfileModalOpen(false)}
       />
     </div>
   );

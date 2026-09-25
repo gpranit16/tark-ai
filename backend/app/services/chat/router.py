@@ -81,7 +81,7 @@ class ModelRouter:
         attempted: set[ProviderName] | None = None,
     ) -> ProviderSelection:
         if fallback_used and attempted:
-            order = self._provider_order(mode)
+            order = self.fallback_order
             candidate = next((p for p in order if p not in attempted and p in self.providers), None)
             provider_name = candidate or self._provider_for_mode(mode)
         elif provider:

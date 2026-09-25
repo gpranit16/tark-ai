@@ -60,18 +60,38 @@ async def _resolve_owner_and_repo(
     arguments: Dict[str, Any],
     token: str,
 ) -> tuple[str, str]:
-    """Helper to extract owner and repo safely, supporting 'owner/repo' strings or auto-resolving authenticated user login."""
+    """Helper to extract owner and repo safely, supporting 'owner/repo' strings, full GitHub URLs, or auto-resolving authenticated user login."""
     owner = str(arguments.get("owner") or "").strip()
     repo = str(arguments.get("repo") or "").strip()
+
+    # Normalize full GitHub URLs (e.g. https://github.com/owner/repo or github.com/owner/repo)
+    if "github.com/" in repo:
+        after_gh = repo.split("github.com/", 1)[1].strip("/")
+        parts = after_gh.split("/")
+        if len(parts) >= 2:
+            owner = parts[0].strip()
+            repo = parts[1].strip()
+    elif "github.com/" in owner:
+        after_gh = owner.split("github.com/", 1)[1].strip("/")
+        parts = after_gh.split("/")
+        if len(parts) >= 2:
+            owner = parts[0].strip()
+            repo = parts[1].strip()
 
     if "/" in repo:
         parts = repo.split("/", 1)
         owner = parts[0].strip()
         repo = parts[1].strip()
-    elif "/" in owner:
+    elif "/" in owner and not repo:
         parts = owner.split("/", 1)
         owner = parts[0].strip()
         repo = parts[1].strip()
+
+    # Clean .git suffix, query strings, and hashes
+    if repo.endswith(".git"):
+        repo = repo[:-4].strip()
+    owner = owner.split("?")[0].split("#")[0].strip()
+    repo = repo.split("?")[0].split("#")[0].strip()
 
     if not owner and token:
         try:
@@ -125,14 +145,14 @@ class GitHubSearchRepositoriesTool(BaseTool):
 
 class GitHubGetRepositoryTool(BaseTool):
     name = "github_get_repository"
-    description = "Get detailed information about a specific GitHub repository including metadata and root directory structure."
+    description = "Get detailed information about a specific GitHub repository including metadata and root directory structure. Specify the exact repository name."
     category = "github"
     permissions = [ToolPermission.NETWORK]
     parameters = {
         "type": "object",
         "properties": {
             "owner": {"type": "string", "description": "Repository owner / organization (e.g. 'torvalds', 'octocat'). Optional if authenticated."},
-            "repo": {"type": "string", "description": "Repository name (e.g. 'linux', 'iot-bin', or 'owner/repo')"},
+            "repo": {"type": "string", "description": "Repository name (e.g. 'linux', 'iot-bin', or 'owner/repo'). Do NOT pass generic words like 'repositories' or 'repos'."},
         },
         "required": ["repo"],
     }
@@ -143,6 +163,26 @@ class GitHubGetRepositoryTool(BaseTool):
             return err_res
 
         service = get_github_service()
+
+        # Intercept generic plural references where model intended to list repositories
+        repo_arg = str(arguments.get("repo") or "").strip().lower()
+        generic_repo_words = {
+            "repositories", "repos", "my repositories", "my repos", "all",
+            "list", "my_repositories", "user_repositories", "all repositories",
+            "all repos", "github", "user repos", "user repositories",
+        }
+        if repo_arg in generic_repo_words:
+            try:
+                res = await service.list_user_repositories(token=token, per_page=10)
+                return ToolResult(
+                    tool_name="github_list_user_repositories",
+                    success=True,
+                    data={"repositories": res, "count": len(res)},
+                    source="github_mcp",
+                )
+            except Exception as list_exc:
+                return ToolResult(tool_name=self.name, success=False, error=str(list_exc), source="github_mcp")
+
         owner, repo = await _resolve_owner_and_repo(arguments, token)
         if not owner or not repo:
             return ToolResult(tool_name=self.name, success=False, error="Both repository name and owner must be provided.", source="github_mcp")
@@ -163,15 +203,18 @@ class GitHubGetRepositoryTool(BaseTool):
 
 class GitHubListUserRepositoriesTool(BaseTool):
     name = "github_list_user_repositories"
-    description = "List repositories owned by the authenticated user or a specific GitHub username."
+    description = "List repositories owned by the authenticated user or a specific GitHub username. Use this when the user asks 'what are my repositories', 'list repos', 'show my repos', etc."
     category = "github"
     permissions = [ToolPermission.NETWORK]
     parameters = {
         "type": "object",
         "properties": {
-            "username": {"type": "string", "description": "Optional GitHub username. If omitted, lists authenticated user's repositories."},
+            "username": {
+                "type": "string",
+                "description": "Optional GitHub username. If omitted or empty, lists the authenticated user's own repositories. Do NOT pass 'me', 'my', 'user', or generic words.",
+            },
             "sort": {"type": "string", "enum": ["updated", "created", "pushed", "full_name"], "default": "updated"},
-            "per_page": {"type": "integer", "default": 6, "description": "Number of repositories to return (default: 6)"},
+            "per_page": {"type": "integer", "default": 10, "description": "Number of repositories to return (default: 10, max: 50)"},
         },
     }
 
@@ -181,15 +224,36 @@ class GitHubListUserRepositoriesTool(BaseTool):
             return err_res
 
         service = get_github_service()
+        username = arguments.get("username")
+
+        # Sanitize generic placeholder usernames
+        if username and str(username).strip().lower() in (
+            "me", "my", "user", "current", "self", "none", "null", "undefined",
+            "@me", "repositories", "repos", "my repositories", "my repos", "authenticated",
+        ):
+            username = None
+
         try:
             res = await service.list_user_repositories(
                 token=token,
-                username=arguments.get("username"),
+                username=username,
                 sort=arguments.get("sort", "updated"),
-                per_page=arguments.get("per_page", 6),
+                per_page=arguments.get("per_page", 10),
             )
             return ToolResult(tool_name=self.name, success=True, data={"repositories": res, "count": len(res)}, source="github_mcp")
         except Exception as exc:
+            # Fallback: If a specific username search resulted in Not Found, fallback to the authenticated user's repositories
+            if username:
+                try:
+                    res = await service.list_user_repositories(
+                        token=token,
+                        username=None,
+                        sort=arguments.get("sort", "updated"),
+                        per_page=arguments.get("per_page", 10),
+                    )
+                    return ToolResult(tool_name=self.name, success=True, data={"repositories": res, "count": len(res)}, source="github_mcp")
+                except Exception:
+                    pass
             return ToolResult(tool_name=self.name, success=False, error=str(exc), source="github_mcp")
 
 
@@ -281,7 +345,10 @@ class GitHubGetFileContentsTool(BaseTool):
 
 class GitHubCreateOrUpdateFileTool(BaseTool):
     name = "github_create_or_update_file"
-    description = "Create a new file or update an existing file in a GitHub repository. Requires user confirmation."
+    description = (
+        "Create a new file or commit/update an existing file in a GitHub repository. "
+        "Use this whenever the user asks to create, update, edit, modify, or commit a file (such as README.md, code files, configs) in a GitHub repository."
+    )
     category = "github"
     permissions = [ToolPermission.NETWORK, ToolPermission.USER_DATA]
     parameters = {

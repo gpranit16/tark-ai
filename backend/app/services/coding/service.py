@@ -272,7 +272,7 @@ class CodingService:
                 from app.tools.base import ToolExecutionContext
 
                 tool_context = ToolExecutionContext(
-                    user_id=thread.user_id,
+                    user_id=user_id or thread.user_id,
                     project_id=thread.project_id,
                     thread_id=thread.id,
                     session=session,

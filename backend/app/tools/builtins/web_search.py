@@ -44,9 +44,28 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
         if self.api_key:
             return self.api_key
         try:
-            return get_settings().tavily_api_key or os.environ.get("TAVILY_API_KEY")
+            val = get_settings().tavily_api_key or os.environ.get("TAVILY_API_KEY")
+            if val:
+                return val
         except Exception:
-            return os.environ.get("TAVILY_API_KEY")
+            pass
+        val = os.environ.get("TAVILY_API_KEY")
+        if val:
+            return val
+        # Dynamic fallback: check local .env files if not in environment
+        for env_path in [".env", "backend/.env", "../.env"]:
+            if os.path.exists(env_path):
+                try:
+                    with open(env_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            line_s = line.strip()
+                            if line_s.startswith("TAVILY_API_KEY="):
+                                k = line_s.split("=", 1)[1].strip().strip('"\'')
+                                if k:
+                                    return k
+                except Exception:
+                    pass
+        return None
 
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         self.last_answer = None
@@ -61,14 +80,10 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
         payload: Dict[str, Any] = {
             "api_key": api_key,
             "query": query,
-            "search_depth": "basic",
+            "search_depth": "advanced" if is_fresh_query else "basic",
             "include_answer": True,
             "max_results": max_results,
         }
-
-        if is_fresh_query:
-            payload["topic"] = "news"
-            payload["days"] = 7
 
         try:
             async with httpx.AsyncClient(timeout=7.0) as client:
@@ -95,57 +110,6 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
         return []
 
 
-class GoogleNewsRSSWebProvider(BaseWebSearchProvider):
-    """Real-time Google News RSS search provider with guaranteed publication dates."""
-
-    async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-        encoded_query = urllib.parse.quote_plus(query)
-        url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        }
-
-        try:
-            async with httpx.AsyncClient(timeout=4.5, follow_redirects=True) as client:
-                resp = await client.get(url, headers=headers)
-                if resp.status_code != 200:
-                    return []
-                content = resp.text
-
-            items = re.findall(r"<item>([\s\S]*?)</item>", content)
-            results: List[Dict[str, Any]] = []
-
-            for item in items[:max_results]:
-                title_m = re.search(r"<title>([\s\S]*?)</title>", item)
-                link_m = re.search(r"<link>([\s\S]*?)</link>", item)
-                pub_m = re.search(r"<pubDate>([\s\S]*?)</pubDate>", item)
-                source_m = re.search(r"<source[^>]*>([\s\S]*?)</source>", item)
-                desc_m = re.search(r"<description>([\s\S]*?)</description>", item)
-
-                raw_title = title_m.group(1).strip() if title_m else "Article"
-                clean_title = html.unescape(raw_title)
-                link = html.unescape(link_m.group(1).strip()) if link_m else ""
-                pub_date = pub_m.group(1).strip() if pub_m else None
-                source_name = html.unescape(source_m.group(1).strip()) if source_m else "Google News"
-
-                raw_desc = desc_m.group(1) if desc_m else ""
-                clean_desc = html.unescape(re.sub(r"<[^>]+>", "", raw_desc).strip())
-
-                if link:
-                    results.append({
-                        "title": clean_title,
-                        "url": link,
-                        "snippet": clean_desc or f"{clean_title} — Source: {source_name}. Published: {pub_date or 'Recent'}",
-                        "published_date": pub_date,
-                        "source": source_name,
-                    })
-
-            return results
-        except Exception as exc:
-            logger.warning("GoogleNewsRSSWebProvider failed: %s", exc)
-            return []
-
-
 class DuckDuckGoWebSearchProvider(BaseWebSearchProvider):
     """Zero-key free web search provider using DuckDuckGo endpoint."""
 
@@ -157,24 +121,24 @@ class DuckDuckGoWebSearchProvider(BaseWebSearchProvider):
         }
 
         try:
-            async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
+            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
                 response = await client.get(url, headers=headers)
                 if response.status_code != 200:
                     return []
                 content = response.text
 
-            results = []
-            matches = re.findall(
-                r'<a class="result__url" href="([^"]+)".*?<a class="result__snippet[^>]*>(.*?)</a>',
+            title_matches = re.findall(
+                r'<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]+)"[^>]*>(.*?)</a>',
                 content,
                 re.DOTALL,
             )
-            title_matches = re.findall(
-                r'<a class="result__a" href="([^"]+)">(.*?)</a>',
+            snippet_matches = re.findall(
+                r'<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>',
                 content,
                 re.DOTALL,
             )
 
+            results = []
             for i, (link, raw_title) in enumerate(title_matches[:max_results]):
                 clean_title = re.sub(r"<[^>]+>", "", raw_title).strip()
                 clean_title = html.unescape(clean_title)
@@ -186,8 +150,8 @@ class DuckDuckGoWebSearchProvider(BaseWebSearchProvider):
                         actual_url = urllib.parse.unquote(m.group(1))
 
                 snippet = ""
-                if i < len(matches):
-                    snippet = re.sub(r"<[^>]+>", "", matches[i][1]).strip()
+                if i < len(snippet_matches):
+                    snippet = re.sub(r"<[^>]+>", "", snippet_matches[i]).strip()
                     snippet = html.unescape(snippet)
 
                 results.append({
@@ -204,17 +168,125 @@ class DuckDuckGoWebSearchProvider(BaseWebSearchProvider):
             return []
 
 
+class WikipediaWebSearchProvider(BaseWebSearchProvider):
+    """Zero-key authoritative encyclopedia and factual entity search using Wikipedia API."""
+
+    async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+        clean_q = query.strip()
+        encoded = urllib.parse.quote_plus(clean_q)
+        url = (
+            f"https://en.wikipedia.org/w/api.php?action=query&list=search"
+            f"&srsearch={encoded}&format=json&utf8=1&srlimit={max_results}"
+        )
+        headers = {
+            "User-Agent": "TarkAI-Bot/1.0 (https://tarkai.dev; contact@tarkai.dev)",
+            "Accept": "application/json",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=4.0, follow_redirects=True) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    return []
+                data = resp.json()
+
+            items = data.get("query", {}).get("search", [])
+            results: List[Dict[str, Any]] = []
+            for item in items[:max_results]:
+                title = item.get("title", "")
+                raw_snippet = item.get("snippet", "")
+                clean_snippet = html.unescape(re.sub(r"<[^>]+>", "", raw_snippet).strip())
+                page_url = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
+                results.append({
+                    "title": title,
+                    "url": page_url,
+                    "snippet": clean_snippet or title,
+                    "published_date": None,
+                    "source": "wikipedia",
+                })
+            return results
+        except Exception as exc:
+            logger.debug("WikipediaWebSearchProvider failed: %s", exc)
+            return []
+
+
+class GoogleNewsRSSWebProvider(BaseWebSearchProvider):
+    """Real-time Google News RSS search provider with guaranteed publication dates and keyword filtering."""
+
+    async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
+        encoded_query = urllib.parse.quote_plus(query)
+        url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-US&gl=US&ceid=US:en"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        }
+
+        try:
+            async with httpx.AsyncClient(timeout=4.5, follow_redirects=True) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code != 200:
+                    return []
+                content = resp.text
+
+            items = re.findall(r"<item>([\s\S]*?)</item>", content)
+            raw_results: List[Dict[str, Any]] = []
+
+            for item in items[:max_results * 2]:
+                title_m = re.search(r"<title>([\s\S]*?)</title>", item)
+                link_m = re.search(r"<link>([\s\S]*?)</link>", item)
+                pub_m = re.search(r"<pubDate>([\s\S]*?)</pubDate>", item)
+                source_m = re.search(r"<source[^>]*>([\s\S]*?)</source>", item)
+                desc_m = re.search(r"<description>([\s\S]*?)</description>", item)
+
+                raw_title = title_m.group(1).strip() if title_m else "Article"
+                clean_title = html.unescape(raw_title)
+                link = html.unescape(link_m.group(1).strip()) if link_m else ""
+                pub_date = pub_m.group(1).strip() if pub_m else None
+                source_name = html.unescape(source_m.group(1).strip()) if source_m else "Google News"
+
+                raw_desc = desc_m.group(1) if desc_m else ""
+                clean_desc = html.unescape(re.sub(r"<[^>]+>", "", raw_desc).strip())
+
+                if link:
+                    raw_results.append({
+                        "title": clean_title,
+                        "url": link,
+                        "snippet": clean_desc or f"{clean_title} — Source: {source_name}. Published: {pub_date or 'Recent'}",
+                        "published_date": pub_date,
+                        "source": source_name,
+                    })
+
+            # Filter items for query relevance to prevent unrelated random news
+            query_words = set(re.findall(r"\b[A-Za-z0-9]{3,}\b", query.lower())) - {
+                "what", "where", "when", "which", "whose", "whom", "this", "that",
+                "search", "latest", "recent", "about", "find", "online", "news", "total", "scored"
+            }
+            if query_words:
+                filtered = []
+                for r in raw_results:
+                    txt = (r["title"] + " " + r["snippet"]).lower()
+                    if any(w in txt for w in query_words):
+                        filtered.append(r)
+                if filtered:
+                    return filtered[:max_results]
+
+            return raw_results[:max_results]
+        except Exception as exc:
+            logger.warning("GoogleNewsRSSWebProvider failed: %s", exc)
+            return []
+
+
 class CompositeWebSearchEngine(BaseWebSearchProvider):
-    """Multi-tiered search engine prioritizing Tavily AI, with Google News RSS and DuckDuckGo fallbacks."""
+    """Multi-tiered search engine prioritizing Tavily AI, with DuckDuckGo, Wikipedia, and Google News RSS fallbacks."""
 
     def __init__(self):
         self.tavily = TavilyWebSearchProvider()
-        self.google_news = GoogleNewsRSSWebProvider()
         self.duckduckgo = DuckDuckGoWebSearchProvider()
+        self.wikipedia = WikipediaWebSearchProvider()
+        self.google_news = GoogleNewsRSSWebProvider()
         self.providers: List[BaseWebSearchProvider] = [
             self.tavily,
-            self.google_news,
             self.duckduckgo,
+            self.wikipedia,
+            self.google_news,
         ]
 
     @property
@@ -230,14 +302,29 @@ class CompositeWebSearchEngine(BaseWebSearchProvider):
         except Exception as e:
             logger.warning("Primary Tavily search failed: %s", e)
 
-        # 2. Fallbacks: Google News RSS and DuckDuckGo
-        for provider in [self.google_news, self.duckduckgo]:
-            try:
-                results = await provider.search(query, max_results=max_results)
-                if results:
-                    return results
-            except Exception as e:
-                logger.debug("Provider %s failed: %s", provider.__class__.__name__, e)
+        # 2. General live web search: DuckDuckGo (zero-key fallback)
+        try:
+            results = await self.duckduckgo.search(query, max_results=max_results)
+            if results:
+                return results
+        except Exception as e:
+            logger.debug("DuckDuckGo search failed: %s", e)
+
+        # 3. Authoritative encyclopedia facts: Wikipedia
+        try:
+            results = await self.wikipedia.search(query, max_results=max_results)
+            if results:
+                return results
+        except Exception as e:
+            logger.debug("Wikipedia search failed: %s", e)
+
+        # 4. News and fresh events fallback: Google News RSS
+        try:
+            results = await self.google_news.search(query, max_results=max_results)
+            if results:
+                return results
+        except Exception as e:
+            logger.debug("Google News RSS search failed: %s", e)
 
         return []
 

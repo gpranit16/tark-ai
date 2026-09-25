@@ -78,6 +78,14 @@ class RAGRouter:
         if "[web search enabled]" in content_lower:
             return False
 
+        # GitHub MCP queries (e.g. "update README.md of iot-bin repo", "show package.json") take precedence over file extension matching
+        try:
+            from app.services.chat.tool_loop import detect_github_intent
+            if detect_github_intent(content):
+                return False
+        except Exception:
+            pass
+
         # Document reference phrase detection (e.g., "in this document", "the pdf", etc.)
         for pattern in _COMPILED_DOC_PATTERNS:
             if pattern.search(content_lower):

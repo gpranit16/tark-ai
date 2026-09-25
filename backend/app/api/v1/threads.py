@@ -259,6 +259,7 @@ async def chat(
                 thread_id=thread_id,
                 payload=payload,
                 is_disconnected=request.is_disconnected,
+                user_id=user_id,
             ):
                 yield event
 

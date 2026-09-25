@@ -755,9 +755,10 @@ export default function Sidebar() {
           </div>
         </div>
       )}
-      {/* Profile & Account Modal */}
-      <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} />
     </aside>
+
+    {/* Profile & Account Modal */}
+    <ProfileModal isOpen={isProfileModalOpen} onClose={() => setIsProfileModalOpen(false)} />
     </>
   );
 }
