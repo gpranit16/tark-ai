@@ -341,3 +341,79 @@ def test_parse_tool_calls_natural_language_intent_rescue():
     assert calls[0][0] == "web_search"
     assert "astra" in calls[0][1]["query"].lower()
 
+
+# ── 9. Domain Authority & Enterprise Search Tests ─────────────────────────────
+
+def test_normalize_url():
+    from app.tools.builtins.web_search import normalize_url
+
+    u1 = "https://www.openai.com/index/hello-world/?utm_source=twitter&utm_medium=social"
+    u2 = "http://openai.com/index/hello-world"
+    assert normalize_url(u1) == "https://openai.com/index/hello-world"
+    assert normalize_url(u2) == "http://openai.com/index/hello-world"
+
+
+def test_domain_authority_ranker_tiers():
+    from app.tools.builtins.web_search import DomainAuthorityRanker
+
+    # Entity match -> Tier 1
+    w_entity, t_entity = DomainAuthorityRanker.get_domain_tier("https://openai.com/index/o3-mini", query="latest model from OpenAI")
+    assert t_entity == 1
+    assert w_entity == 1.0
+
+    # .gov -> Tier 1
+    w_gov, t_gov = DomainAuthorityRanker.get_domain_tier("https://www.nasa.gov/missions/webb/discoveries", query="space discoveries")
+    assert t_gov == 1
+    assert w_gov == 1.0
+
+    # Wikipedia -> Tier 1
+    w_wiki, t_wiki = DomainAuthorityRanker.get_domain_tier("https://en.wikipedia.org/wiki/OpenAI_o1", query="OpenAI o1")
+    assert t_wiki == 1
+    assert w_wiki == 1.0
+
+    # Wire services -> Tier 2
+    w_wire, t_wire = DomainAuthorityRanker.get_domain_tier("https://www.reuters.com/technology/article123", query="tech news")
+    assert t_wire == 2
+    assert w_wire == 0.85
+
+    # Tech press -> Tier 3
+    w_tech, t_tech = DomainAuthorityRanker.get_domain_tier("https://www.theverge.com/2025/1/1/article", query="gadgets")
+    assert t_tech == 3
+    assert w_tech == 0.70
+
+    # General web -> Tier 4
+    w_gen, t_gen = DomainAuthorityRanker.get_domain_tier("https://random-tech-blog.org/page", query="gadgets")
+    assert t_gen == 4
+    assert w_gen == 0.40
+
+    # YouTube / UGC -> Tier 5 (excluded from factual queries)
+    w_yt, t_yt = DomainAuthorityRanker.get_domain_tier("https://www.youtube.com/watch?v=123", query="latest gpt model")
+    assert t_yt == 5
+    assert w_yt == 0.0
+
+
+def test_domain_authority_rank_and_filter():
+    from app.tools.builtins.web_search import DomainAuthorityRanker
+
+    candidates = [
+        {"title": "Clickbait Video", "url": "https://www.youtube.com/watch?v=fake", "score": 0.95},
+        {"title": "OpenAI Official Post", "url": "https://openai.com/index/latest-release", "score": 0.80},
+        {"title": "Random Blog", "url": "https://someblog.xyz/post", "score": 0.70},
+        {"title": "Reuters Coverage", "url": "https://www.reuters.com/technology/ai-release", "score": 0.75},
+    ]
+
+    # For factual queries, YouTube (Tier 5) and .xyz spam TLDs must be excluded
+    ranked = DomainAuthorityRanker.rank_and_filter(candidates, query="latest model by openai")
+    urls = [r["url"] for r in ranked]
+    assert "https://www.youtube.com/watch?v=fake" not in urls
+    assert "https://someblog.xyz/post" not in urls
+    # Official domain should be #1
+    assert ranked[0]["url"] == "https://openai.com/index/latest-release"
+    assert ranked[1]["url"] == "https://www.reuters.com/technology/ai-release"
+
+    # Explicit video queries allow YouTube through
+    ranked_video = DomainAuthorityRanker.rank_and_filter(candidates, query="watch video of openai release")
+    video_urls = [r["url"] for r in ranked_video]
+    assert "https://www.youtube.com/watch?v=fake" in video_urls
+
+

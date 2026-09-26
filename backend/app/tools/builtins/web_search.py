@@ -1,6 +1,7 @@
 """Live Web Search Tool for TARK AI with fresh publication dates and multi-provider fallback."""
 from __future__ import annotations
 
+import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 import html
@@ -8,7 +9,7 @@ import json
 import logging
 import os
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import urllib.parse
 import urllib.request
 
@@ -23,48 +24,295 @@ FRESHNESS_KEYWORDS = {
     "price", "ceo", "release", "released", "announcement"
 }
 
-SPAM_OR_SPECULATIVE_DOMAINS = {
-    "hidekazu-konishi.com",
-    "evertune.ai",
-    "scriptbyai.com",
-    "local-ai-zone.github.io",
-    "releasebot.io",
-    "gracker.ai",
-    "llm-stats.com",
-    "thursdai.news",
-    "felloai.com",
-    "timesofai.com",
-    "aireleasetracker.com",
-    "gradually.ai",
-    "investing.com",
-    "au.investing.com",
-    "aimodels.org",
-    "futuretools.io",
-    "trendingai.com",
-    "aivalley.ai",
-}
 
-SPECULATIVE_AI_PATTERNS = [
-    r"\bgpt-?5(?:\.\d+)?\b",
-    r"\bgpt-?6\b",
-    r"\bgpt-?6\s+astra\b",
-    r"\b(?:sol|terra|luna)\b.*?\bgpt\b|\bgpt\b.*?\b(?:sol|terra|luna)\b",
-    r"\bclaude\s+(?:sonnet\s+)?(?:4|5)\b",
-    r"\bgrok\s+(?:4|5)\b",
-]
+def normalize_url(u: str) -> str:
+    """Canonicalize URLs for reliable deduplication across different search providers."""
+    try:
+        parsed = urllib.parse.urlparse(u.strip())
+        scheme = parsed.scheme.lower() or "https"
+        netloc = parsed.netloc.lower().split(":")[0]
+        if netloc.startswith("www."):
+            netloc = netloc[4:]
+        path = parsed.path.rstrip("/")
+        # Filter out tracking and cache parameters
+        query_params = urllib.parse.parse_qsl(parsed.query)
+        clean_params = [
+            (k, v) for k, v in query_params
+            if not k.lower().startswith(("utm_", "ref", "fbclid", "gclid", "source", "feature", "spm"))
+        ]
+        clean_query = urllib.parse.urlencode(sorted(clean_params))
+        return f"{scheme}://{netloc}{path}" + (f"?{clean_query}" if clean_query else "")
+    except Exception:
+        return u.strip().lower()
 
 
-def _is_speculative_ai_result(query: str, title: str, snippet: str, url: str) -> bool:
-    """Detect speculative, fictional, or fake tracker claims about unreleased AI models."""
-    q_lower = query.lower()
-    # If the user explicitly asks about these speculative models by name, don't suppress all matches
-    if any(k in q_lower for k in ["gpt-5", "gpt 5", "gpt5", "gpt-6", "gpt 6", "gpt6", "astra", "claude 4", "claude 5", "grok 4", "grok 5"]):
-        return False
-    combined = f"{title} {snippet} {url}".lower()
-    for pat in SPECULATIVE_AI_PATTERNS:
-        if re.search(pat, combined, flags=re.IGNORECASE):
-            return True
-    return False
+class DomainAuthorityRanker:
+    """Algorithmic domain authority and trust scoring engine.
+    Ranks sources across 5 trust tiers based on structural domain authority,
+    institution types, wire services, and dynamic entity domain matching.
+    """
+
+    TIER_1_TLDS = (".gov", ".edu", ".mil")
+    TIER_1_DOMAINS = {
+        "wikipedia.org",
+        "en.wikipedia.org",
+        "britannica.com",
+        "arxiv.org",
+        "doi.org",
+        "nature.com",
+        "science.org",
+        "ncbi.nlm.nih.gov",
+        "pnas.org",
+        "cell.com",
+        "oscars.org",
+        "nobelprize.org",
+    }
+
+    TIER_2_DOMAINS = {
+        "reuters.com",
+        "apnews.com",
+        "bloomberg.com",
+        "bbc.com",
+        "bbc.co.uk",
+        "wsj.com",
+        "ft.com",
+        "nytimes.com",
+        "washingtonpost.com",
+        "theguardian.com",
+        "thehindu.com",
+        "indianexpress.com",
+        "ndtv.com",
+        "afp.com",
+        "time.com",
+        "economist.com",
+        "cnbc.com",
+        "forbes.com",
+    }
+
+    TIER_3_DOMAINS = {
+        "theverge.com",
+        "techcrunch.com",
+        "arstechnica.com",
+        "wired.com",
+        "venturebeat.com",
+        "zdnet.com",
+        "cnet.com",
+        "ieee.org",
+        "acm.org",
+        "github.com",
+        "developer.mozilla.org",
+        "stackoverflow.com",
+        "espncricinfo.com",
+        "cricbuzz.com",
+        "olympics.com",
+        "fifa.com",
+        "nba.com",
+        "who.int",
+        "gsmarena.com",
+        "variety.com",
+        "hollywoodreporter.com",
+        "ign.com",
+        "space.com",
+    }
+
+    ENTITY_DOMAIN_MAP = {
+        "openai": "openai.com",
+        "chatgpt": "openai.com",
+        "gpt": "openai.com",
+        "sora": "openai.com",
+        "dall-e": "openai.com",
+        "anthropic": "anthropic.com",
+        "claude": "anthropic.com",
+        "google": "google.com",
+        "deepmind": "deepmind.google",
+        "gemini": "deepmind.google",
+        "android": "google.com",
+        "pixel": "google.com",
+        "microsoft": "microsoft.com",
+        "windows": "microsoft.com",
+        "azure": "microsoft.com",
+        "copilot": "microsoft.com",
+        "apple": "apple.com",
+        "iphone": "apple.com",
+        "ipad": "apple.com",
+        "macbook": "apple.com",
+        "ios": "apple.com",
+        "meta": "meta.com",
+        "facebook": "meta.com",
+        "instagram": "meta.com",
+        "whatsapp": "whatsapp.com",
+        "nvidia": "nvidia.com",
+        "geforce": "nvidia.com",
+        "amazon": "amazon.com",
+        "aws": "amazon.com",
+        "python": "python.org",
+        "nodejs": "nodejs.org",
+        "node.js": "nodejs.org",
+        "react": "react.dev",
+        "vue": "vuejs.org",
+        "angular": "angular.io",
+        "golang": "go.dev",
+        "rust": "rust-lang.org",
+        "typescript": "typescriptlang.org",
+        "docker": "docker.com",
+        "kubernetes": "kubernetes.io",
+        "linux": "kernel.org",
+        "tesla": "tesla.com",
+        "spacex": "spacex.com",
+        "nasa": "nasa.gov",
+        "samsung": "samsung.com",
+        "galaxy": "samsung.com",
+        "intel": "intel.com",
+        "amd": "amd.com",
+        "ryzen": "amd.com",
+        "sony": "sony.com",
+        "playstation": "playstation.com",
+        "adobe": "adobe.com",
+        "figma": "figma.com",
+        "spotify": "spotify.com",
+        "netflix": "netflix.com",
+        "uber": "uber.com",
+        "github": "github.com",
+    }
+
+    EXCLUDED_FACTUAL_DOMAINS = {
+        "youtube.com",
+        "youtu.be",
+        "tiktok.com",
+        "facebook.com",
+        "instagram.com",
+        "reddit.com",
+        "quora.com",
+        "pinterest.com",
+        "twitter.com",
+        "x.com",
+        "linkedin.com",
+        "medium.com",
+        "substack.com",
+        "tumblr.com",
+        "threads.net",
+    }
+
+    SPAM_TLDS = (".xyz", ".top", ".click", ".buzz", ".cfd", ".rest", ".tk", ".ml", ".ga")
+
+    @classmethod
+    def get_domain_tier(cls, url: str, query: str = "") -> Tuple[float, int]:
+        """Returns (authority_weight, tier_number)."""
+        try:
+            parsed = urllib.parse.urlparse(url)
+            host = (parsed.netloc or "").lower().split(":")[0]
+            if host.startswith("www."):
+                host = host[4:]
+        except Exception:
+            return 0.3, 4
+
+        if not host:
+            return 0.3, 4
+
+        if any(host == d or host.endswith("." + d) for d in cls.EXCLUDED_FACTUAL_DOMAINS):
+            return 0.0, 5
+        if any(host.endswith(tld) for tld in cls.SPAM_TLDS):
+            return 0.0, 5
+
+        q_lower = query.lower()
+        for entity_key, official_domain in cls.ENTITY_DOMAIN_MAP.items():
+            if entity_key in q_lower:
+                if host == official_domain or host.endswith("." + official_domain):
+                    return 1.0, 1
+
+        if any(host.endswith(tld) for tld in cls.TIER_1_TLDS):
+            return 1.0, 1
+        if any(host == d or host.endswith("." + d) for d in cls.TIER_1_DOMAINS):
+            return 1.0, 1
+        if any(host == d or host.endswith("." + d) for d in cls.TIER_2_DOMAINS):
+            return 0.85, 2
+        if any(host == d or host.endswith("." + d) for d in cls.TIER_3_DOMAINS):
+            return 0.70, 3
+
+        return 0.40, 4
+
+    @classmethod
+    def compute_freshness_score(cls, pub_date: Optional[str], text: str, is_fresh_query: bool) -> float:
+        """Score temporal recency relative to current date (2026)."""
+        if not is_fresh_query:
+            return 0.70
+        combined = ((pub_date or "") + " " + text).lower()
+        # Breaking recency / current month (September 2026)
+        if any(k in combined for k in [
+            "sep 2026", "september 2026", "sept 2026", "sep 22, 2026", "sep 3, 2026", "sep 9, 2026",
+            "today", "hours ago", "yesterday", "this week", "this month"
+        ]):
+            return 1.0
+        # 2026 recent months
+        if any(k in combined for k in ["jul 2026", "july 2026", "aug 2026", "august 2026", "2026"]):
+            return 0.85
+        if "2025" in combined:
+            return 0.50
+        if "2024" in combined:
+            return 0.25
+        return 0.40
+
+    @classmethod
+    def rank_and_filter(cls, results: List[Dict[str, Any]], query: str) -> List[Dict[str, Any]]:
+        """Multi-factor AI Search Ranking: Authority + Freshness + Directness + Relevance."""
+        lower_q = query.lower()
+        is_fresh = any(k in lower_q for k in FRESHNESS_KEYWORDS)
+        is_explicit_media_request = any(
+            k in lower_q for k in ["video", "watch", "youtube", "reddit", "discussion", "forum"]
+        )
+
+        query_terms = set(re.findall(r"\b[A-Za-z0-9]{3,}\b", lower_q)) - {
+            "what", "where", "when", "which", "whose", "this", "that", "search", "online", "tell"
+        }
+
+        ranked = []
+        for r in results:
+            url = r.get("url", "")
+            weight, tier = cls.get_domain_tier(url, query)
+            if tier == 5 and not is_explicit_media_request:
+                continue
+
+            title = r.get("title", "")
+            snippet = r.get("snippet", "")
+            pub_date = r.get("published_date")
+
+            # 1. Freshness Score
+            freshness = cls.compute_freshness_score(pub_date, title + " " + snippet, is_fresh)
+
+            # 2. Directness / Keyword Relevance
+            directness = 0.5
+            title_lower = title.lower()
+            if query_terms:
+                matches = sum(1 for w in query_terms if w in title_lower)
+                directness = min(1.0, 0.4 + (matches * 0.15))
+
+            provider_score = float(r.get("score") or 0.6)
+            relevance_score = (directness * 0.6) + (provider_score * 0.4)
+
+            # 3. Multi-factor Weighted Combination
+            if is_fresh:
+                # 35% Domain Authority, 40% Freshness, 25% Relevance
+                final_rank = (weight * 0.35) + (freshness * 0.40) + (relevance_score * 0.25)
+            else:
+                # 60% Domain Authority, 40% Relevance
+                final_rank = (weight * 0.60) + (relevance_score * 0.40)
+
+            r_copy = dict(r)
+            r_copy["_authority_weight"] = weight
+            r_copy["_authority_tier"] = tier
+            r_copy["_freshness_score"] = round(freshness, 2)
+            r_copy["_rank_score"] = round(final_rank, 4)
+            ranked.append(r_copy)
+
+        ranked.sort(key=lambda x: x["_rank_score"], reverse=True)
+
+        # For non-fresh factual queries, if high-authority (Tier 1-3) results exist, keep them clean
+        if not is_fresh and not is_explicit_media_request:
+            high_authority = [r for r in ranked if r.get("_authority_tier", 4) <= 3]
+            if len(high_authority) >= 2:
+                return high_authority
+
+        return ranked
 
 
 import httpx
@@ -165,8 +413,8 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
             "api_key": api_key,
             "query": effective_query,
             "search_depth": "advanced" if is_fresh_query else "basic",
-            "include_answer": True,
-            "exclude_domains": list(SPAM_OR_SPECULATIVE_DOMAINS),
+            "include_answer": False,
+            "exclude_domains": list(DomainAuthorityRanker.EXCLUDED_FACTUAL_DOMAINS),
             "max_results": min(max_results * 2, 10),
         }
 
@@ -176,39 +424,30 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                 if resp.status_code == 200:
                     data = resp.json()
                     raw_answer = data.get("answer")
-                    # Sanitize hallucinated or speculative answers
                     if raw_answer:
-                        hallucination_indicators = [
-                            "inventors at amazon", "sol and luna", "gpt-6 astra",
-                            "gpt-5.6", "gpt-5.5", "gpt-5.3", "gpt-5.2", "gpt-5.1",
-                            "gpt-5", "gpt-6", "claude fable", "claude sonnet 5",
-                            "tier sol", "tier luna", "tier terra"
-                        ]
-                        if not any(h in raw_answer.lower() for h in hallucination_indicators):
-                            self.last_answer = raw_answer
+                        self.last_answer = raw_answer
 
                     results: List[Dict[str, Any]] = []
                     for item in data.get("results", []):
                         url = item.get("url") or ""
+                        if not url:
+                            continue
                         title = item.get("title") or "Web Page"
                         snippet = item.get("content") or ""
-                        if any(spam in url.lower() for spam in SPAM_OR_SPECULATIVE_DOMAINS):
-                            continue
-                        if _is_speculative_ai_result(effective_query, title, snippet, url):
-                            logger.info("Filtered speculative AI search result: %s (%s)", title, url)
-                            continue
                         pub_date = item.get("published_date")
+                        score = float(item.get("score") or 0.6)
                         results.append({
                             "title": title,
                             "url": url,
                             "snippet": snippet,
                             "published_date": pub_date,
+                            "score": score,
                             "source": "tavily",
                         })
                         if len(results) >= max_results:
                             break
 
-                    logger.info("Tavily returned %d results for query: %r (has_answer=%s)", len(results), query[:50], bool(self.last_answer))
+                    logger.info("Tavily returned %d results for query: %r", len(results), query[:50])
                     return results
                 else:
                     logger.warning("Tavily search returned status %d: %s", resp.status_code, resp.text[:200])
@@ -298,8 +537,15 @@ class WikipediaWebSearchProvider(BaseWebSearchProvider):
 
             items = data.get("query", {}).get("search", [])
             results: List[Dict[str, Any]] = []
-            for item in items[:max_results]:
+            incident_terms = {"incident", "controversy", "lawsuit", "breach", "cyberattack", "allegations", "scandal"}
+            is_incident_query = any(t in query.lower() for t in incident_terms)
+
+            for item in items:
                 title = item.get("title", "")
+                lower_title = title.lower()
+                # Filter out incident and breach articles unless explicitly queried
+                if not is_incident_query and any(t in lower_title for t in incident_terms):
+                    continue
                 raw_snippet = item.get("snippet", "")
                 clean_snippet = html.unescape(re.sub(r"<[^>]+>", "", raw_snippet).strip())
                 page_url = f"https://en.wikipedia.org/wiki/{urllib.parse.quote(title.replace(' ', '_'))}"
@@ -310,6 +556,8 @@ class WikipediaWebSearchProvider(BaseWebSearchProvider):
                     "published_date": None,
                     "source": "wikipedia",
                 })
+                if len(results) >= max_results:
+                    break
             return results
         except Exception as exc:
             logger.debug("WikipediaWebSearchProvider failed: %s", exc)
@@ -382,7 +630,11 @@ class GoogleNewsRSSWebProvider(BaseWebSearchProvider):
 
 
 class CompositeWebSearchEngine(BaseWebSearchProvider):
-    """Multi-tiered search engine prioritizing Tavily AI, with DuckDuckGo, Wikipedia, and Google News RSS fallbacks."""
+    """Enterprise-grade multi-provider search engine.
+    Pools candidate search results across Tavily AI Search, Wikipedia Encyclopedia,
+    Google News RSS (for fresh events), and DuckDuckGo fallback,
+    followed by URL canonicalization, deduplication, and DomainAuthorityRanker trust scoring.
+    """
 
     def __init__(self):
         self.tavily = TavilyWebSearchProvider()
@@ -400,90 +652,81 @@ class CompositeWebSearchEngine(BaseWebSearchProvider):
     def last_answer(self) -> Optional[str]:
         return self.tavily.last_answer
 
+    @staticmethod
+    def _should_query_wikipedia(q: str) -> bool:
+        lower = q.lower()
+        if any(entity in lower for entity in DomainAuthorityRanker.ENTITY_DOMAIN_MAP):
+            return True
+        wiki_keywords = {
+            "who", "what", "which", "when", "where", "history", "biography", "founder",
+            "ceo", "model", "release", "released", "version", "specs", "specifications",
+            "country", "capital", "president", "prime minister", "winner", "award",
+            "oscar", "olympics", "championship", "cup", "space", "mission", "satellite",
+            "definition", "meaning", "theory", "algorithm", "language", "framework"
+        }
+        return any(w in lower for w in wiki_keywords)
+
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-        results: List[Dict[str, Any]] = []
-        seen_urls: set[str] = set()
+        clean_q = TavilyWebSearchProvider._clean_query(query)
+        lower_q = clean_q.lower()
+        is_fresh = any(k in lower_q for k in FRESHNESS_KEYWORDS)
+        should_wiki = self._should_query_wikipedia(clean_q)
 
-        # 1. Primary: Tavily AI Search (rich citations + live web with spam filtered)
-        try:
-            tavily_results = await self.tavily.search(query, max_results=max_results)
-            for r in tavily_results:
-                u = r.get("url") or ""
-                if u and u not in seen_urls:
-                    seen_urls.add(u)
-                    results.append(r)
-        except Exception as e:
-            logger.warning("Primary Tavily search failed: %s", e)
+        candidate_pool: List[Dict[str, Any]] = []
 
-        # 2. Authoritative grounding for AI / Frontier models if results are low (< 3)
-        lower_q = query.lower()
-        is_ai_query = any(k in lower_q for k in ["gpt", "openai", "claude", "gemini", "anthropic", "llm", "ai model"])
-        if is_ai_query and len(results) < 3:
+        # Stage 1: Formulate focused Wikipedia search term if entity is detected
+        wiki_search_term = clean_q
+        if should_wiki:
+            for entity_key in DomainAuthorityRanker.ENTITY_DOMAIN_MAP:
+                if entity_key in lower_q:
+                    if any(w in lower_q for w in ["model", "release", "version", "product"]):
+                        wiki_search_term = f"{entity_key} models"
+                    else:
+                        wiki_search_term = entity_key
+                    break
+
+        # Stage 2: Gather candidates concurrently
+        tasks = [self.tavily.search(clean_q, max_results=max_results * 2)]
+        if should_wiki:
+            tasks.append(self.wikipedia.search(wiki_search_term, max_results=4))
+        if is_fresh:
+            tasks.append(self.google_news.search(clean_q, max_results=4))
+
+        gathered_results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        for res in gathered_results:
+            if isinstance(res, list):
+                candidate_pool.extend(res)
+            elif isinstance(res, Exception):
+                logger.warning("Search provider task failed: %s", res)
+
+        # Stage 2: Fallback to DuckDuckGo if primary candidates are sparse (< 2)
+        if len(candidate_pool) < 2:
             try:
-                grounding_query = "OpenAI official flagship model releases GPT-4o o1 o3-mini site:openai.com"
-                if "claude" in lower_q or "anthropic" in lower_q:
-                    grounding_query = "Anthropic official Claude model releases site:anthropic.com"
-                elif "gemini" in lower_q or "google" in lower_q:
-                    grounding_query = "Google DeepMind official Gemini model releases site:deepmind.google"
+                ddg_results = await self.duckduckgo.search(clean_q, max_results=max_results * 2)
+                candidate_pool.extend(ddg_results)
+            except Exception as exc:
+                logger.warning("DuckDuckGo fallback failed: %s", exc)
 
-                grounded_results = await self.tavily.search(grounding_query, max_results=3)
-                for r in grounded_results:
-                    u = r.get("url") or ""
-                    if u and u not in seen_urls and not _is_speculative_ai_result(query, r.get("title", ""), r.get("snippet", ""), u):
-                        seen_urls.add(u)
-                        results.append(r)
-            except Exception as e:
-                logger.debug("Authoritative AI grounding search failed: %s", e)
+        # Stage 3: Normalize URLs and Deduplicate
+        seen_normalized_urls: set[str] = set()
+        deduped_candidates: List[Dict[str, Any]] = []
 
-        # 3. Authoritative Wikipedia grounding for tech, entities, companies, and models
-        needs_encyclopedia = any(k in lower_q for k in [
-            "openai", "gpt", "o1", "o3", "claude", "gemini", "deepseek", "sora",
-            "model", "company", "ceo", "who is", "what is", "founder", "developer", "history", "release"
-        ])
-        if (needs_encyclopedia and len(results) < max_results) or len(results) < 2:
-            try:
-                wiki_results = await self.wikipedia.search(query, max_results=2)
-                for w in wiki_results:
-                    u = w.get("url") or ""
-                    if u and u not in seen_urls and not _is_speculative_ai_result(query, w.get("title", ""), w.get("snippet", ""), u):
-                        seen_urls.add(u)
-                        results.append(w)
-            except Exception as e:
-                logger.debug("Wikipedia supplemental search failed: %s", e)
+        for item in candidate_pool:
+            url = item.get("url") or ""
+            if not url:
+                continue
+            norm_url = normalize_url(url)
+            if norm_url in seen_normalized_urls:
+                continue
+            seen_normalized_urls.add(norm_url)
+            deduped_candidates.append(item)
 
-        # 4. Fallback to DuckDuckGo if still insufficient results
-        if len(results) < 2:
-            try:
-                ddg_results = await self.duckduckgo.search(query, max_results=max_results)
-                for d in ddg_results:
-                    u = d.get("url") or ""
-                    if u and u not in seen_urls:
-                        if any(spam in u.lower() for spam in SPAM_OR_SPECULATIVE_DOMAINS):
-                            continue
-                        if _is_speculative_ai_result(query, d.get("title", ""), d.get("snippet", ""), u):
-                            continue
-                        seen_urls.add(u)
-                        results.append(d)
-            except Exception as e:
-                logger.debug("DuckDuckGo search failed: %s", e)
+        # Stage 4: Algorithmic Domain Authority & Trust Scoring
+        ranked_results = DomainAuthorityRanker.rank_and_filter(deduped_candidates, clean_q)
 
-        # 5. Fallback to Google News RSS for fresh breaking events
-        if len(results) < 2:
-            try:
-                news_results = await self.google_news.search(query, max_results=max_results)
-                for n in news_results:
-                    u = n.get("url") or ""
-                    if u and u not in seen_urls:
-                        if any(spam in u.lower() for spam in SPAM_OR_SPECULATIVE_DOMAINS):
-                            continue
-                        if _is_speculative_ai_result(query, n.get("title", ""), n.get("snippet", ""), u):
-                            continue
-                        seen_urls.add(u)
-                        results.append(n)
-            except Exception as e:
-                logger.debug("Google News RSS search failed: %s", e)
-
-        return results[:max_results]
+        effective_limit = max(max_results, 7) if is_fresh else max_results
+        return ranked_results[:effective_limit]
 
 
 
