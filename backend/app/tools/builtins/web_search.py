@@ -33,7 +33,38 @@ SPAM_OR_SPECULATIVE_DOMAINS = {
     "llm-stats.com",
     "thursdai.news",
     "felloai.com",
+    "timesofai.com",
+    "aireleasetracker.com",
+    "gradually.ai",
+    "investing.com",
+    "au.investing.com",
+    "aimodels.org",
+    "futuretools.io",
+    "trendingai.com",
+    "aivalley.ai",
 }
+
+SPECULATIVE_AI_PATTERNS = [
+    r"\bgpt-?5(?:\.\d+)?\b",
+    r"\bgpt-?6\b",
+    r"\bgpt-?6\s+astra\b",
+    r"\b(?:sol|terra|luna)\b.*?\bgpt\b|\bgpt\b.*?\b(?:sol|terra|luna)\b",
+    r"\bclaude\s+(?:sonnet\s+)?(?:4|5)\b",
+    r"\bgrok\s+(?:4|5)\b",
+]
+
+
+def _is_speculative_ai_result(query: str, title: str, snippet: str, url: str) -> bool:
+    """Detect speculative, fictional, or fake tracker claims about unreleased AI models."""
+    q_lower = query.lower()
+    # If the user explicitly asks about these speculative models by name, don't suppress all matches
+    if any(k in q_lower for k in ["gpt-5", "gpt 5", "gpt5", "gpt-6", "gpt 6", "gpt6", "astra", "claude 4", "claude 5", "grok 4", "grok 5"]):
+        return False
+    combined = f"{title} {snippet} {url}".lower()
+    for pat in SPECULATIVE_AI_PATTERNS:
+        if re.search(pat, combined, flags=re.IGNORECASE):
+            return True
+    return False
 
 
 import httpx
@@ -103,7 +134,15 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
         for pat in noise_patterns:
             cleaned = re.sub(pat, " ", cleaned, flags=re.IGNORECASE)
 
-        # 3. Normalize common conversational tech terms
+        # 3. Clean trailing conversational noise
+        trailing_noise = [
+            r"\s*(?:search\s+and\s+tell(?:\s+me)?|search\s+and\s+batao|search\s+karke\s+batao|search\s+karo|search\s+kr|search\s+it|please)\s*$",
+            r"\s*(?:till\s+today|as\s+of\s+today|today|now)\s*$",
+        ]
+        for pat in trailing_noise:
+            cleaned = re.sub(pat, " ", cleaned, flags=re.IGNORECASE)
+
+        # 4. Normalize common conversational tech terms
         cleaned = re.sub(r"\bopen\s+ai\b", "OpenAI", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\bdevloper\b", "developer", cleaned, flags=re.IGNORECASE)
         cleaned = re.sub(r"\bye\b", "", cleaned, flags=re.IGNORECASE)
@@ -141,7 +180,9 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                     if raw_answer:
                         hallucination_indicators = [
                             "inventors at amazon", "sol and luna", "gpt-6 astra",
-                            "gpt-5.6", "claude fable", "tier sol", "tier luna"
+                            "gpt-5.6", "gpt-5.5", "gpt-5.3", "gpt-5.2", "gpt-5.1",
+                            "gpt-5", "gpt-6", "claude fable", "claude sonnet 5",
+                            "tier sol", "tier luna", "tier terra"
                         ]
                         if not any(h in raw_answer.lower() for h in hallucination_indicators):
                             self.last_answer = raw_answer
@@ -149,13 +190,18 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                     results: List[Dict[str, Any]] = []
                     for item in data.get("results", []):
                         url = item.get("url") or ""
+                        title = item.get("title") or "Web Page"
+                        snippet = item.get("content") or ""
                         if any(spam in url.lower() for spam in SPAM_OR_SPECULATIVE_DOMAINS):
+                            continue
+                        if _is_speculative_ai_result(effective_query, title, snippet, url):
+                            logger.info("Filtered speculative AI search result: %s (%s)", title, url)
                             continue
                         pub_date = item.get("published_date")
                         results.append({
-                            "title": item.get("title") or "Web Page",
+                            "title": title,
                             "url": url,
-                            "snippet": item.get("content") or "",
+                            "snippet": snippet,
                             "published_date": pub_date,
                             "source": "tavily",
                         })
@@ -369,42 +415,69 @@ class CompositeWebSearchEngine(BaseWebSearchProvider):
         except Exception as e:
             logger.warning("Primary Tavily search failed: %s", e)
 
-        # 2. Authoritative Wikipedia grounding for tech, entities, companies, and models
+        # 2. Authoritative grounding for AI / Frontier models if results are low (< 3)
         lower_q = query.lower()
+        is_ai_query = any(k in lower_q for k in ["gpt", "openai", "claude", "gemini", "anthropic", "llm", "ai model"])
+        if is_ai_query and len(results) < 3:
+            try:
+                grounding_query = "OpenAI official flagship model releases GPT-4o o1 o3-mini site:openai.com"
+                if "claude" in lower_q or "anthropic" in lower_q:
+                    grounding_query = "Anthropic official Claude model releases site:anthropic.com"
+                elif "gemini" in lower_q or "google" in lower_q:
+                    grounding_query = "Google DeepMind official Gemini model releases site:deepmind.google"
+
+                grounded_results = await self.tavily.search(grounding_query, max_results=3)
+                for r in grounded_results:
+                    u = r.get("url") or ""
+                    if u and u not in seen_urls and not _is_speculative_ai_result(query, r.get("title", ""), r.get("snippet", ""), u):
+                        seen_urls.add(u)
+                        results.append(r)
+            except Exception as e:
+                logger.debug("Authoritative AI grounding search failed: %s", e)
+
+        # 3. Authoritative Wikipedia grounding for tech, entities, companies, and models
         needs_encyclopedia = any(k in lower_q for k in [
             "openai", "gpt", "o1", "o3", "claude", "gemini", "deepseek", "sora",
             "model", "company", "ceo", "who is", "what is", "founder", "developer", "history", "release"
         ])
-        if needs_encyclopedia or len(results) < 2:
+        if (needs_encyclopedia and len(results) < max_results) or len(results) < 2:
             try:
                 wiki_results = await self.wikipedia.search(query, max_results=2)
                 for w in wiki_results:
                     u = w.get("url") or ""
-                    if u and u not in seen_urls:
+                    if u and u not in seen_urls and not _is_speculative_ai_result(query, w.get("title", ""), w.get("snippet", ""), u):
                         seen_urls.add(u)
                         results.append(w)
             except Exception as e:
                 logger.debug("Wikipedia supplemental search failed: %s", e)
 
-        # 3. Fallback to DuckDuckGo if still insufficient results
+        # 4. Fallback to DuckDuckGo if still insufficient results
         if len(results) < 2:
             try:
                 ddg_results = await self.duckduckgo.search(query, max_results=max_results)
                 for d in ddg_results:
                     u = d.get("url") or ""
                     if u and u not in seen_urls:
+                        if any(spam in u.lower() for spam in SPAM_OR_SPECULATIVE_DOMAINS):
+                            continue
+                        if _is_speculative_ai_result(query, d.get("title", ""), d.get("snippet", ""), u):
+                            continue
                         seen_urls.add(u)
                         results.append(d)
             except Exception as e:
                 logger.debug("DuckDuckGo search failed: %s", e)
 
-        # 4. Fallback to Google News RSS for fresh breaking events
+        # 5. Fallback to Google News RSS for fresh breaking events
         if len(results) < 2:
             try:
                 news_results = await self.google_news.search(query, max_results=max_results)
                 for n in news_results:
                     u = n.get("url") or ""
                     if u and u not in seen_urls:
+                        if any(spam in u.lower() for spam in SPAM_OR_SPECULATIVE_DOMAINS):
+                            continue
+                        if _is_speculative_ai_result(query, n.get("title", ""), n.get("snippet", ""), u):
+                            continue
                         seen_urls.add(u)
                         results.append(n)
             except Exception as e:

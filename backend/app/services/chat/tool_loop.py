@@ -101,6 +101,11 @@ def format_tools_system_prompt(
         "     * Deliver clear, direct, and concise answers immediately from the search findings.",
         "     * Summarize the latest releases and facts in clean bullet points or a short table with markdown source links: `[Source Name](URL)`.",
         "     * DO NOT engage in meta-commentary, self-deprecating apologies about earlier turns, or repetitive disclaimers. Answer directly like ChatGPT.",
+        "   - CRITICAL ZERO-HALLUCINATION & FACT GROUNDING (AI MODEL RELEASES):",
+        "     * Official OpenAI flagship releases: GPT-4o, GPT-4o mini, OpenAI o1 (reasoning), and OpenAI o3-mini.",
+        "     * OpenAI has NEVER released GPT-5, GPT-5.1, GPT-5.2, GPT-5.3, GPT-5.4, GPT-5.5, GPT-5.6, or GPT-6.",
+        "     * Any search results, blog posts, speculative trackers (e.g. TimesOfAI, AIReleaseTracker), or fictional release dates claiming 'GPT-5.5', 'GPT-5.6', 'GPT-6', 'GPT-6 Astra', or 'Sol/Terra/Luna tiers' are SPECULATIVE RUMORS or FABRICATIONS.",
+        "     * HARD CONSTRAINT: You are STRICTLY FORBIDDEN from stating that GPT-5, GPT-5.5, GPT-5.6, or GPT-6 have been released. If web citations or search snippets mention them, explicitly clarify that official OpenAI records do NOT list these as released, and state the verified released models (GPT-4o, o1, o3-mini).",
         "   - NEVER claim that you do not have internet access or live web access — you DO have access via `web_search`.",
         "",
         "2. OTHER TOOLS & CALCULATIONS:",
@@ -1511,7 +1516,8 @@ class ToolCallOrchestrator:
                 "\n\n[STRICT SYNTHESIS DIRECTIVE]:\n"
                 "- Provide your final response in clean, user-friendly markdown.\n"
                 "- Do NOT output any `<tool_call>` tags, JSON tool objects, or XML tool markup.\n"
-                "- Ground your response in the factual data returned in the tool response above. If the tool is web_search or news and results are limited, supplement with accurate knowledge to directly answer the user's question rather than refusing.\n"
+                "- Ground your response in the verified factual data returned in the tool response above. If the tool is web_search or news and results are limited, supplement with accurate knowledge to directly answer the user's question rather than refusing.\n"
+                "- AI MODEL FACTUALITY RULE: OpenAI has NOT released GPT-5, GPT-5.5, GPT-5.6, or GPT-6. Official latest OpenAI models are GPT-4o, GPT-4o mini, OpenAI o1, and OpenAI o3-mini. NEVER state that GPT-5, GPT-5.5, GPT-5.6, or GPT-6 have been released. If web citations or search snippets mention them, clarify that these are speculative trackers, rumors, or unverified claims.\n"
                 "- If listing items (repositories, tasks, calendar events, search results, issues, PRs): Format cleanly with bullet points, names, status, and concise details.\n"
                 "- If requires_confirmation is present: Clearly summarize the proposed write action and ask the user for explicit confirmation before proceeding.\n"
                 "- If a tool returned an error (such as repository not found or not connected): Explain the issue clearly and politely with helpful advice (e.g. check spelling or connect under Settings)."
