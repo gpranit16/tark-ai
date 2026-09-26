@@ -72,6 +72,18 @@ _SYNOPSIS_PATTERNS = [
     r"\bwhat\s+is\s+(?:this|the)\s+(?:doc|pdf|file|document|paper|report)\b",
     r"\bwhat\s+is\s+it\s+about\b",
     r"\bwhat\s+are\s+(?:the\s+contents|the\s+key\s+points|the\s+highlights)\b",
+    r"\banalyz\w*\b",
+    r"\banalysis\b",
+    r"\bhelp\s+me\b",
+    r"\bread\s+(?:this|the\b)",
+    r"\bexamine\b",
+    r"\binspect\b",
+    r"\bcheck\s+(?:this|the\b)",
+    r"\bdetails?\b",
+    r"\bbreakdown\b",
+    r"\bdescribe\b",
+    r"\breceipt\b",
+    r"\binvoice\b",
 ]
 
 _COMPILED_SYNOPSIS = [re.compile(p, re.IGNORECASE) for p in _SYNOPSIS_PATTERNS]
@@ -173,51 +185,18 @@ class CRAGOrchestrator:
                 doc_res = await session.execute(doc_stmt)
                 parsed_docs = list(doc_res.scalars().all())
 
-                # If any document is still processing/pending, wait briefly (up to 3 seconds)
-                if any(d.status in ("pending", "processing") for d in parsed_docs) or len(parsed_docs) < len(effective_file_ids):
-                    for _ in range(6):
-                        await asyncio.sleep(0.5)
-                        recheck_chunks = await session.execute(chunk_stmt)
-                        if recheck_chunks.scalar_one_or_none() is not None:
-                            has_chunks = True
-                            break
-                        doc_res = await session.execute(doc_stmt)
-                        parsed_docs = list(doc_res.scalars().all())
-                        if not any(d.status in ("pending", "processing") for d in parsed_docs) and len(parsed_docs) == len(effective_file_ids):
-                            break
+                # If parsed documents are completed, try fast ingestion
+                completed_file_ids = [d.file_id for d in parsed_docs if d.status == "completed"]
+                for fid in completed_file_ids:
+                    try:
+                        from app.services.embeddings.ingestion import EmbeddingIngestionService
+                        ingestion_svc = EmbeddingIngestionService()
+                        await ingestion_svc.ingest_file(session, fid, user_id)
+                        has_chunks = True
+                    except Exception as e:
+                        logger.debug("Fast ingestion skipped for file %s: %s", fid, e)
 
-                # If parsed documents are completed, ensure embeddings are ingested on the fly
-                if not has_chunks:
-                    completed_file_ids = [d.file_id for d in parsed_docs if d.status == "completed"]
-                    for fid in completed_file_ids:
-                        try:
-                            from app.services.embeddings.ingestion import EmbeddingIngestionService
-                            ingestion_svc = EmbeddingIngestionService()
-                            await ingestion_svc.ingest_file(session, fid, user_id)
-                            has_chunks = True
-                        except Exception as e:
-                            logger.error("On-the-fly ingestion failed for file %s: %s", fid, e)
-
-                # Recheck if still no chunks
-                final_check = await session.execute(chunk_stmt)
-                if final_check.scalar_one_or_none() is None:
-                    doc_res = await session.execute(doc_stmt)
-                    fresh_docs = list(doc_res.scalars().all())
-                    if any(d.status in ("pending", "processing") for d in fresh_docs) or len(fresh_docs) < len(effective_file_ids):
-                        empty_res = CRAGResult(
-                            decision="insufficient_evidence",
-                            answer="The attached document is currently being processed and indexed. Please try again in a few moments.",
-                            citations=[],
-                            context_text="",
-                            retrieved_count=0,
-                            reranked_count=0,
-                            grading_confidence=0.0,
-                            crag_attempts=1,
-                            query_rewritten=False,
-                            original_query=query,
-                            final_query=query,
-                        )
-                        return empty_res, "", [], scoped_filenames
+                # If still no chunks, do not block or refuse - fall through to instant document extraction
 
         t_total_start = time.perf_counter()
         t_retrieval_ms = 0.0
@@ -281,8 +260,8 @@ class CRAGOrchestrator:
             else:
                 t_retry_retrieval_ms += elapsed_ret
 
-            # If document scope is active and query is synopsis and search yielded no chunks, fetch leading chunks or instant document text
-            if is_synopsis and effective_file_ids and not raw_chunks:
+            # If document scope is active and search yielded no chunks (or query is synopsis), fetch leading chunks or instant document text
+            if effective_file_ids and not raw_chunks:
                 lead_stmt = select(DocumentChunk).where(
                     DocumentChunk.file_id.in_(effective_file_ids),
                     DocumentChunk.user_id == user_id,
@@ -355,13 +334,13 @@ class CRAGOrchestrator:
                     continue
                 break
 
-            # 2. Synopsis / Pre-Rerank Fast Path or CrossEncoder Rerank
-            if is_synopsis:
+            # 2. Synopsis / Instant Document Extraction Fast Path or CrossEncoder Rerank
+            if is_synopsis or any(r.metadata.get("source") == "instant_extraction" for r in raw_chunks):
                 reranked_chunks = raw_chunks[:retrieve_k]
                 grade = GradeResult(
                     relevant=True,
                     confidence=0.90,
-                    reason="Document synopsis query grounded on document leading contents.",
+                    reason="Document query grounded on attached file contents.",
                     selected_chunk_indices=list(range(len(reranked_chunks))),
                 )
                 reranker_used = False

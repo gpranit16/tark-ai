@@ -20,7 +20,7 @@ class GeminiEmbeddingProvider(BaseEmbeddingProvider):
         settings = get_settings()
         self._api_key = api_key or settings.gemini_api_key
         self._dimension = dimension
-        self._model_name = "text-embedding-004"
+        self._model_name = "gemini-embedding-001"
 
     @property
     def model_name(self) -> str:

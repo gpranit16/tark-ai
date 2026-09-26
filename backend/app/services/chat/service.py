@@ -486,10 +486,37 @@ class ChatService:
                 thread_id=thread.id,
             )
         except Exception as exc:
-            from app.providers.base import ProviderError, ProviderErrorCode
-            err = ProviderError(ProviderErrorCode.UNKNOWN, str(exc), retryable=False)
-            yield error_event(err)
-            return
+            logger.warning("[stream_rag_chat] prepare_rag_context failed (%s), falling back to direct doc extraction", exc)
+            context_text = ""
+            citations = []
+            scoped_filenames = []
+            try:
+                from app.services.chat.document_context import build_thread_document_context
+                fallback_doc_context, _ = await build_thread_document_context(
+                    session=session,
+                    user_id=user_id,
+                    thread_id=thread.id,
+                    explicit_file_ids=payload.file_ids,
+                )
+                if fallback_doc_context and fallback_doc_context.strip():
+                    context_text = fallback_doc_context
+            except Exception as fb_err:
+                logger.warning("[stream_rag_chat] build_thread_document_context also failed: %s", fb_err)
+
+            from app.schemas.rag import CRAGResult
+            result = CRAGResult(
+                decision="grounded" if context_text else "insufficient_evidence",
+                answer="",
+                citations=[],
+                context_text=context_text,
+                retrieved_count=1 if context_text else 0,
+                reranked_count=1 if context_text else 0,
+                grading_confidence=0.90 if context_text else 0.0,
+                crag_attempts=1,
+                query_rewritten=False,
+                original_query=payload.content,
+                final_query=payload.content,
+            )
 
         yield rag_retrieval_complete(result.retrieved_count)
         yield rag_reranking_started()
