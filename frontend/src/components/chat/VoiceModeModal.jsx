@@ -17,6 +17,8 @@ export default function VoiceModeModal({
   toggleMicMute,
   toggleSpeakerMute,
   interrupt,
+  sendSpeechOrToggle,
+  retry,
   mode,
   model,
   provider,
@@ -40,7 +42,9 @@ export default function VoiceModeModal({
   const getStatusLabel = () => {
     switch (voiceState) {
       case 'LISTENING':
-        return 'Listening…';
+        return userTranscript ? 'Listening…' : 'Listening… (speak anytime)';
+      case 'PROCESSING':
+        return 'Transcribing audio…';
       case 'THINKING':
         return 'Thinking…';
       case 'SPEAKING':
@@ -48,7 +52,7 @@ export default function VoiceModeModal({
       case 'MUTED':
         return 'Microphone Muted';
       case 'ERROR':
-        return 'Microphone Error';
+        return 'Microphone Issue';
       default:
         return 'Ready';
     }
@@ -133,11 +137,11 @@ export default function VoiceModeModal({
               </motion.p>
             )}
 
-            {voiceState === 'SPEAKING' && assistantTranscript && (
+            {assistantTranscript && (
               <motion.p
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
-                className="text-[14px] leading-relaxed text-[#C9A86A] mt-2 line-clamp-3 max-w-lg font-normal"
+                className="text-[14px] leading-relaxed text-[#C9A86A] mt-2 line-clamp-4 max-w-lg font-normal"
               >
                 {assistantTranscript}
               </motion.p>
@@ -161,12 +165,34 @@ export default function VoiceModeModal({
             {isMicMuted ? <MicOff size={18} /> : <Mic size={18} />}
           </button>
 
-          {/* Tap to Interrupt / Speak */}
+          {/* Tap to Speak / Done / Interrupt */}
           <button
-            onClick={interrupt}
-            className="px-5 py-2.5 rounded-full bg-[#C9A86A] text-[#080808] font-medium text-[13px] hover:bg-[#D4B579] active:scale-95 transition-all shadow-[0_0_20px_rgba(201,168,106,0.3)]"
+            onClick={sendSpeechOrToggle || interrupt}
+            disabled={voiceState === 'THINKING' || voiceState === 'PROCESSING'}
+            className={clsx(
+              "px-5 py-2.5 rounded-full font-medium text-[13px] active:scale-95 transition-all shadow-[0_0_20px_rgba(201,168,106,0.3)]",
+              voiceState === 'SPEAKING'
+                ? "bg-[#C9A86A] text-[#080808] hover:bg-[#D4B579]"
+                : voiceState === 'THINKING' || voiceState === 'PROCESSING'
+                ? "bg-[#1E1C18] text-[#C9A86A] border border-[#C9A86A]/40 cursor-wait animate-pulse"
+                : voiceState === 'ERROR'
+                ? "bg-red-500/20 text-red-300 border border-red-500/40 hover:bg-red-500/30"
+                : userTranscript
+                ? "bg-[#C9A86A] text-[#080808] hover:bg-[#D4B579] font-semibold"
+                : "bg-[#C9A86A] text-[#080808] hover:bg-[#D4B579]"
+            )}
           >
-            {voiceState === 'SPEAKING' ? 'Interrupt' : 'Tap to Speak'}
+            {voiceState === 'SPEAKING'
+              ? 'Interrupt'
+              : voiceState === 'THINKING'
+              ? 'Thinking…'
+              : voiceState === 'PROCESSING'
+              ? 'Transcribing…'
+              : voiceState === 'ERROR'
+              ? 'Retry Mic'
+              : userTranscript
+              ? 'Done (Send)'
+              : 'Tap to Speak'}
           </button>
 
           {/* Speaker Mute Button */}

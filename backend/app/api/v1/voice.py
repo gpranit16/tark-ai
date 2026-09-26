@@ -3,7 +3,7 @@ from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
 
-from app.api.v1.auth_deps import get_current_user
+from app.api.v1.auth_deps import get_current_user, get_optional_current_user
 from app.models.conversation import User
 from app.services.voice.service import VoiceService
 
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/voice", tags=["voice"])
 
 @router.get("/config")
 async def get_voice_config(
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ) -> Dict[str, Any]:
     """Get supported voice features and configuration for authenticated user."""
     service = VoiceService()
@@ -25,7 +25,7 @@ async def get_voice_config(
 async def transcribe_audio(
     file: UploadFile = File(...),
     language: Optional[str] = Form(default=None),
-    current_user: User = Depends(get_current_user),
+    current_user: Optional[User] = Depends(get_optional_current_user),
 ) -> Dict[str, Any]:
     """Transcribe uploaded audio file to text using server STT provider."""
     if not file.filename:
@@ -46,5 +46,6 @@ async def transcribe_audio(
     except ValueError as val_err:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=str(val_err))
     except Exception as exc:
-        logger.error("Voice transcription failed for user %s: %s", current_user.id, exc)
+        user_desc = current_user.id if current_user else "anonymous"
+        logger.error("Voice transcription failed for user %s: %s", user_desc, exc)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Transcription failed: {exc}")

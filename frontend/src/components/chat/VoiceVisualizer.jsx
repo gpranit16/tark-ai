@@ -66,19 +66,35 @@ export default function VoiceVisualizer({ voiceState = 'IDLE', audioLevel = 0 })
       >
         {/* Dynamic Waveform Bars inside core */}
         <div className="flex items-center justify-center gap-1.5 h-12">
-          {[0.6, 1.0, 1.4, 1.0, 0.6].map((multiplier, i) => {
-            const barHeight =
-              voiceState === 'LISTENING' || voiceState === 'SPEAKING'
-                ? Math.max(8, level * 40 * multiplier)
-                : voiceState === 'THINKING'
-                ? 16 + Math.sin(Date.now() / 200 + i) * 10
-                : 6;
+          {[0.6, 1.0, 1.5, 1.0, 0.6].map((multiplier, i) => {
+            let barHeight = 8;
+            if (voiceState === 'LISTENING') {
+              if (level > 0.04) {
+                barHeight = Math.max(10, Math.min(44, level * 54 * multiplier));
+              } else {
+                // Subtle organic ambient breathing so idle state feels alive
+                barHeight = 8 + (i % 2 === 0 ? 4 : 8);
+              }
+            } else if (voiceState === 'SPEAKING') {
+              barHeight = Math.max(12, Math.min(46, (level || 0.4) * 50 * multiplier));
+            } else if (voiceState === 'THINKING') {
+              barHeight = 14 + (i === 2 ? 16 : i === 1 || i === 3 ? 10 : 4);
+            } else if (voiceState === 'ERROR') {
+              barHeight = 6;
+            }
 
             return (
               <motion.div
                 key={i}
-                animate={{ height: barHeight }}
-                transition={{ duration: 0.06 }}
+                animate={{
+                  height: barHeight,
+                  opacity: voiceState === 'LISTENING' && level <= 0.04 ? [0.6, 1, 0.6] : 1,
+                }}
+                transition={{
+                  duration: voiceState === 'LISTENING' && level <= 0.04 ? 1.5 : 0.08,
+                  repeat: voiceState === 'LISTENING' && level <= 0.04 ? Infinity : 0,
+                  ease: 'easeInOut',
+                }}
                 className={clsx(
                   "w-1 rounded-full transition-colors duration-300",
                   voiceState === 'ERROR'

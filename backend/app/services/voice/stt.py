@@ -31,8 +31,19 @@ class GroqWhisperSTTProvider(BaseSTTProvider):
         headers = {
             "Authorization": f"Bearer {self.api_key}",
         }
+
+        mime_type = "audio/wav"
+        if filename.endswith(".webm"):
+            mime_type = "audio/webm"
+        elif filename.endswith(".mp4") or filename.endswith(".m4a"):
+            mime_type = "audio/mp4"
+        elif filename.endswith(".ogg"):
+            mime_type = "audio/ogg"
+        elif filename.endswith(".mp3"):
+            mime_type = "audio/mpeg"
+
         files = {
-            "file": (filename, audio_bytes, "audio/wav"),
+            "file": (filename, audio_bytes, mime_type),
         }
         data = {
             "model": "whisper-large-v3",

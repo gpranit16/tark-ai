@@ -39,6 +39,7 @@ export default function Sidebar() {
   const isSidebarOpen = useAppStore((state) => state.isSidebarOpen);
   const setIsSidebarOpen = useAppStore((state) => state.setIsSidebarOpen);
   const activeThreadId = useAppStore((state) => state.activeThreadId);
+  const setActiveThreadId = useAppStore((state) => state.setActiveThreadId);
   const activeProjectId = useAppStore((state) => state.activeProjectId);
   const activeProject = useAppStore((state) => state.activeProject);
   const setActiveProject = useAppStore((state) => state.setActiveProject);
@@ -59,6 +60,7 @@ export default function Sidebar() {
 
   // 3-dot dropdown menu state
   const [openMenuId, setOpenMenuId] = useState(null);
+  const [openUpwards, setOpenUpwards] = useState(false);
 
   // Inline rename state
   const [editingThreadId, setEditingThreadId] = useState(null);
@@ -116,9 +118,10 @@ export default function Sidebar() {
   });
 
   const handleNewChat = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
+    e?.preventDefault();
+    e?.stopPropagation();
     setActiveThreadId(null);
+    closeMobileSidebar();
     navigate('/');
   };
 
@@ -187,14 +190,26 @@ export default function Sidebar() {
   const handleConfirmDelete = async () => {
     if (!deletingThread) return;
     const threadIdToDelete = deletingThread.id;
+
+    // 1. Instant optimistic update in React Query cache so it disappears immediately with 0 delay!
+    queryClient.setQueriesData({ queryKey: ['threads'] }, (old) => {
+      if (!Array.isArray(old)) return old;
+      return old.filter((t) => t.id !== threadIdToDelete);
+    });
+
     try {
       await threadApi.deleteThread(threadIdToDelete);
-      invalidateThreads();
+      queryClient.removeQueries({ queryKey: ['thread', threadIdToDelete] });
+      queryClient.removeQueries({ queryKey: ['messages', threadIdToDelete] });
+      await queryClient.invalidateQueries({ queryKey: ['threads'] });
       if (activeThreadId === threadIdToDelete) {
-        navigate('/');
+        setActiveThreadId(null);
+        navigate('/', { replace: true });
       }
     } catch (err) {
       console.error('Failed to delete thread:', err);
+      // Revert if error
+      queryClient.invalidateQueries({ queryKey: ['threads'] });
     } finally {
       setDeletingThread(null);
     }
@@ -287,7 +302,14 @@ export default function Sidebar() {
                 onClick={(e) => {
                   e.preventDefault();
                   e.stopPropagation();
-                  setOpenMenuId(isMenuOpen ? null : thread.id);
+                  if (isMenuOpen) {
+                    setOpenMenuId(null);
+                  } else {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const spaceBelow = window.innerHeight - rect.bottom;
+                    setOpenUpwards(spaceBelow < 250);
+                    setOpenMenuId(thread.id);
+                  }
                 }}
                 className={clsx(
                   'p-1 rounded text-[#767676] hover:text-[#F4F2ED] hover:bg-[#1C1C22] transition-all',
@@ -302,7 +324,11 @@ export default function Sidebar() {
               {isMenuOpen && (
                 <div
                   ref={menuRef}
-                  className="absolute right-0 top-full mt-1 w-44 bg-[#111114] border border-white/[0.08] rounded-xl shadow-2xl py-1.5 z-50 text-[12px] text-[#F4F2ED] divide-y divide-white/[0.05] backdrop-blur-md"
+                  onClick={(e) => e.stopPropagation()}
+                  className={clsx(
+                    "absolute right-0 w-44 bg-[#111114] border border-white/[0.08] rounded-xl shadow-2xl py-1.5 z-50 text-[12px] text-[#F4F2ED] divide-y divide-white/[0.05] backdrop-blur-md max-h-56 overflow-y-auto scrollbar-thin scrollbar-thumb-white/10",
+                    openUpwards ? "bottom-full mb-1" : "top-full mt-1"
+                  )}
                 >
                   <div className="py-0.5">
                     <button

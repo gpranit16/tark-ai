@@ -34,9 +34,11 @@ export class BrowserSpeechSynthesisOutputProvider extends VoiceOutputProvider {
     this.synth = typeof window !== 'undefined' ? window.speechSynthesis : null;
     this.queue = [];
     this.isSpeaking = false;
-    this.selectedVoice = null;
     this.animFrameId = null;
+    this.keepAliveInterval = null;
     this.isMuted = false;
+    this.activeUtterances = new Set();
+    this.currentUtterance = null;
 
     this._initVoices();
   }
@@ -48,29 +50,71 @@ export class BrowserSpeechSynthesisOutputProvider extends VoiceOutputProvider {
   _initVoices() {
     if (!this.synth) return;
 
-    const updateVoices = () => {
-      const voices = this.synth.getVoices();
-      if (!voices || voices.length === 0) return;
+    const loadVoices = () => {
+      try {
+        this.synth.getVoices();
+      } catch (_) {}
+    };
 
-      // Prefer natural English voices (Google, Microsoft, Apple, Samantha, Daniel)
-      const preferred = voices.find(
+    loadVoices();
+    if (this.synth.onvoiceschanged !== undefined) {
+      this.synth.onvoiceschanged = loadVoices;
+    }
+  }
+
+  /**
+   * Warm up browser speech synthesis directly inside a user gesture (click/tap)
+   * to satisfy Chromium audio autoplay policy.
+   */
+  warmup() {
+    if (!this.isSupported() || !this.synth) return;
+    try {
+      if (this.synth.paused) {
+        this.synth.resume();
+      }
+      const u = new SpeechSynthesisUtterance(' ');
+      u.volume = 0.01;
+      u.rate = 10;
+      this.synth.speak(u);
+    } catch (_) {}
+  }
+
+  _pickVoiceForText(text) {
+    if (!this.synth) return null;
+    let voices = [];
+    try {
+      voices = this.synth.getVoices() || [];
+    } catch (_) {}
+
+    const hasDevanagari = /[\u0900-\u097F]/.test(text);
+
+    if (hasDevanagari) {
+      const hindiVoice = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith('hi'));
+      if (hindiVoice) {
+        return { voice: hindiVoice, lang: 'hi-IN' };
+      }
+      return { voice: null, lang: 'hi-IN' };
+    }
+
+    if (voices.length > 0) {
+      const naturalEn = voices.find(
         (v) =>
-          v.lang.startsWith('en') &&
+          v.lang &&
+          v.lang.toLowerCase().startsWith('en') &&
           (v.name.includes('Natural') ||
             v.name.includes('Google') ||
             v.name.includes('Samantha') ||
             v.name.includes('Daniel') ||
-            v.name.includes('Karen') ||
+            v.name.includes('Jenny') ||
+            v.name.includes('Guy') ||
+            v.name.includes('Aria') ||
             v.name.includes('Premium'))
       );
-
-      this.selectedVoice = preferred || voices.find((v) => v.lang.startsWith('en')) || voices[0];
-    };
-
-    updateVoices();
-    if (this.synth.onvoiceschanged !== undefined) {
-      this.synth.onvoiceschanged = updateVoices;
+      const anyEn = voices.find((v) => v.lang && v.lang.toLowerCase().startsWith('en'));
+      return { voice: naturalEn || anyEn || voices[0], lang: naturalEn?.lang || 'en-US' };
     }
+
+    return { voice: null, lang: 'en-US' };
   }
 
   setMuted(muted) {
@@ -88,7 +132,6 @@ export class BrowserSpeechSynthesisOutputProvider extends VoiceOutputProvider {
         return;
       }
       t += 0.15;
-      // Generate dynamic audio level oscillation
       const level = 0.35 + 0.45 * Math.abs(Math.sin(t) * Math.cos(t * 1.5));
       this.onAudioLevel(level);
       this.animFrameId = requestAnimationFrame(animate);
@@ -104,76 +147,118 @@ export class BrowserSpeechSynthesisOutputProvider extends VoiceOutputProvider {
     this.onAudioLevel(0);
   }
 
+  _startKeepAlive() {
+    this._stopKeepAlive();
+    this.keepAliveInterval = setInterval(() => {
+      if (this.isSpeaking && this.synth && !this.synth.paused) {
+        try {
+          this.synth.pause();
+          this.synth.resume();
+        } catch (_) {}
+      }
+    }, 4500);
+  }
+
+  _stopKeepAlive() {
+    if (this.keepAliveInterval) {
+      clearInterval(this.keepAliveInterval);
+      this.keepAliveInterval = null;
+    }
+  }
+
   speakSentence(text) {
     if (!this.isSupported() || this.isMuted) return;
 
     const cleaned = this._cleanTextForSpeech(text);
-    if (!cleaned) return;
+    if (!cleaned || cleaned.trim().length === 0) return;
 
-    this.queue.push(cleaned);
+    this.queue.push(cleaned.trim());
+
     if (!this.isSpeaking) {
+      this.isSpeaking = true;
       this._playNext();
     }
   }
 
   _cleanTextForSpeech(text) {
     if (!text) return '';
-    // Strip markdown formatting, code blocks, URLs, and JSON tags
-    let cleaned = text
+    return text
+      .replace(/<think>[\s\S]*?(?:<\/think>|$)/gi, '')
       .replace(/```[\s\S]*?```/g, 'Here is the code.')
       .replace(/`([^`]+)`/g, '$1')
       .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/\[\d+\]/g, '')
       .replace(/https?:\/\/\S+/g, '')
       .replace(/<[^>]+>/g, '')
-      .replace(/[*_#~]/g, '')
+      .replace(/[*_#~>]/g, '')
+      .replace(/^[\s-–—*•]+/gm, '')
       .trim();
-
-    return cleaned;
   }
 
   _playNext() {
     if (this.queue.length === 0) {
       this.isSpeaking = false;
+      this.currentUtterance = null;
       this._stopSimulatedAudioMeter();
+      this._stopKeepAlive();
       this.onSpeakingEnd();
       this.onStateChange('IDLE');
       return;
     }
 
     const textToSpeak = this.queue.shift();
-    if (!textToSpeak) {
+    if (!textToSpeak || textToSpeak.trim().length === 0) {
       this._playNext();
       return;
     }
 
-    const utterance = new SpeechSynthesisUtterance(textToSpeak);
-    if (this.selectedVoice) {
-      utterance.voice = this.selectedVoice;
-    }
-    utterance.rate = 1.05;
-    utterance.pitch = 1.0;
-
-    utterance.onstart = () => {
-      this.isSpeaking = true;
-      this.onSpeakingStart();
-      this.onStateChange('SPEAKING');
-      this._startSimulatedAudioMeter();
-    };
-
-    utterance.onend = () => {
-      this._playNext();
-    };
-
-    utterance.onerror = (e) => {
-      if (e.error !== 'canceled' && e.error !== 'interrupted') {
-        console.warn('[VoiceOutputProvider] TTS playback error:', e.error);
-      }
-      this._playNext();
-    };
-
     try {
+      const utterance = new SpeechSynthesisUtterance(textToSpeak);
+      const voiceConfig = this._pickVoiceForText(textToSpeak);
+      if (voiceConfig) {
+        if (voiceConfig.voice) utterance.voice = voiceConfig.voice;
+        if (voiceConfig.lang) utterance.lang = voiceConfig.lang;
+      }
+      utterance.rate = 1.05;
+      utterance.pitch = 1.0;
+
+      // Keep strong reference so Chromium GC doesn't kill playback
+      this.currentUtterance = utterance;
+      this.activeUtterances.add(utterance);
+
+      utterance.onstart = () => {
+        this.isSpeaking = true;
+        this.onSpeakingStart();
+        this.onStateChange('SPEAKING');
+        this._startSimulatedAudioMeter();
+        this._startKeepAlive();
+      };
+
+      utterance.onend = () => {
+        this.activeUtterances.delete(utterance);
+        if (this.currentUtterance === utterance) {
+          this.currentUtterance = null;
+        }
+        this._playNext();
+      };
+
+      utterance.onerror = (e) => {
+        this.activeUtterances.delete(utterance);
+        if (this.currentUtterance === utterance) {
+          this.currentUtterance = null;
+        }
+        if (e.error !== 'canceled' && e.error !== 'interrupted') {
+          console.warn('[VoiceOutputProvider] TTS playback error:', e.error);
+        }
+        this._playNext();
+      };
+
+      if (this.synth.paused) {
+        this.synth.resume();
+      }
       this.synth.speak(utterance);
     } catch (err) {
+      this.currentUtterance = null;
       console.warn('[VoiceOutputProvider] SpeechSynthesis speak failed:', err);
       this._playNext();
     }
@@ -182,7 +267,10 @@ export class BrowserSpeechSynthesisOutputProvider extends VoiceOutputProvider {
   stop() {
     this.queue = [];
     this.isSpeaking = false;
+    this.activeUtterances.clear();
+    this.currentUtterance = null;
     this._stopSimulatedAudioMeter();
+    this._stopKeepAlive();
     if (this.synth) {
       try {
         this.synth.cancel();

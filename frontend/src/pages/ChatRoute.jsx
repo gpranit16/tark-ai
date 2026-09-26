@@ -667,6 +667,9 @@ export default function ChatRoute() {
           queryClient.setQueryData(['messages', activeThreadId], updated);
           return updated;
         });
+        if (voiceSessionRef.current) {
+          voiceSessionRef.current.handleAssistantComplete(finalContent);
+        }
         setStreamingDisplay(null);
         streamingContentRef.current = '';
         pendingCitationsRef.current = [];
@@ -922,12 +925,17 @@ export default function ChatRoute() {
     streamingDisplay,
     stopStreaming,
   });
+  const voiceSessionRef = useRef(voiceSession);
+  voiceSessionRef.current = voiceSession;
 
   const handleOpenVoiceMode = () => {
     if (!isAuthenticated) {
       sessionStorage.setItem('tarkai_pending_prompt', 'Voice conversation');
       navigate('/login', { state: { from: location.pathname || '/' } });
       return;
+    }
+    if (voiceSession.warmup) {
+      voiceSession.warmup();
     }
     setIsVoiceModeOpen(true);
   };
@@ -1549,6 +1557,8 @@ export default function ChatRoute() {
         toggleMicMute={voiceSession.toggleMicMute}
         toggleSpeakerMute={voiceSession.toggleSpeakerMute}
         interrupt={voiceSession.interrupt}
+        sendSpeechOrToggle={voiceSession.sendSpeechOrToggle}
+        retry={voiceSession.retry}
         mode={mode}
         model={model}
         provider={provider}

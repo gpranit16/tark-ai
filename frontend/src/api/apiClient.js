@@ -37,7 +37,20 @@ export async function fetchApi(endpoint, options = {}) {
       throw new Error(`API Error (${response.status}): ${errorDetail}`);
     }
 
-    return response.json();
+    if (response.status === 204 || response.headers.get('content-length') === '0') {
+      return null;
+    }
+
+    const text = await response.text();
+    if (!text || text.trim() === '') {
+      return null;
+    }
+
+    try {
+      return JSON.parse(text);
+    } catch (parseErr) {
+      return text;
+    }
   } catch (err) {
     clearTimeout(timeoutId);
     if (err.name === 'AbortError' || err.message?.includes('aborted')) {
