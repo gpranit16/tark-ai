@@ -1,0 +1,4 @@
+# Optional local ML dependencies (for offline BGE embedding and reranking models).
+# Note: sentence-transformers pulls PyTorch (~2.5GB). In production (Render/Vercel),
+# Gemini embeddings and MockReranker are used instead to keep container slug <100MB and memory <50MB.
+sentence-transformers>=3.0.0

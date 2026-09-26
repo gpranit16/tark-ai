@@ -21,8 +21,12 @@ def get_embedding_provider() -> BaseEmbeddingProvider:
             _embedding_instance = GeminiEmbeddingProvider()
         return _embedding_instance
 
-    from app.services.embeddings.bge import LocalBGEEmbeddingProvider
-    if _embedding_instance is None or not isinstance(_embedding_instance, LocalBGEEmbeddingProvider):
-        _embedding_instance = LocalBGEEmbeddingProvider()
-    return _embedding_instance
+    try:
+        from app.services.embeddings.bge import LocalBGEEmbeddingProvider
+        if _embedding_instance is None or not isinstance(_embedding_instance, LocalBGEEmbeddingProvider):
+            _embedding_instance = LocalBGEEmbeddingProvider()
+        return _embedding_instance
+    except Exception:
+        from app.services.embeddings.mock import MockEmbeddingProvider
+        return MockEmbeddingProvider()
 

@@ -128,3 +128,10 @@ async def seed_test_user() -> dict[str, object]:
         session.add(User(id=DEV_TEST_USER_ID))
         await session.commit()
         return {"status": "ok", "created": True, "user_id": str(DEV_TEST_USER_ID)}
+
+
+if __name__ == "__main__":
+    import os
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("app.main:app", host="0.0.0.0", port=port)
