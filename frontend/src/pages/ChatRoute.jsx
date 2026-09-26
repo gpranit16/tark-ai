@@ -262,7 +262,12 @@ export default function ChatRoute() {
   const [pasteError, setPasteError] = useState(null);
   const [isDragging, setIsDragging] = useState(false);
   const [chatStorageProvider, setChatStorageProvider] = useState(() => {
-    return localStorage.getItem('tarkai_chat_storage_provider') || 'local';
+    const saved = localStorage.getItem('tarkai_chat_storage_provider');
+    if (saved) return saved;
+    // In production (VITE_API_BASE_URL set = pointing to Render), default to B2
+    // to avoid ephemeral local filesystem issues on Render containers
+    const isProduction = !!import.meta.env.VITE_API_BASE_URL;
+    return isProduction ? 'b2' : 'local';
   });
 
   const toggleChatStorageProvider = () => {

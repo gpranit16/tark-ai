@@ -81,7 +81,11 @@ def get_allowed_origins() -> list[str]:
         for local_url in ("http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"):
             if local_url not in origins:
                 origins.append(local_url)
-    return origins if origins else ["*"]
+    # NOTE: Do NOT fall back to ["*"] here.
+    # allow_origin_regex handles Vercel/preview domains and returns the specific
+    # matching origin (required by browsers when Authorization headers are used).
+    # Returning "*" causes CORS failures on credentialed requests.
+    return origins
 
 
 app = FastAPI(
