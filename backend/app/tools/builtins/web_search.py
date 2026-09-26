@@ -23,6 +23,18 @@ FRESHNESS_KEYWORDS = {
     "price", "ceo", "release", "released", "announcement"
 }
 
+SPAM_OR_SPECULATIVE_DOMAINS = {
+    "hidekazu-konishi.com",
+    "evertune.ai",
+    "scriptbyai.com",
+    "local-ai-zone.github.io",
+    "releasebot.io",
+    "gracker.ai",
+    "llm-stats.com",
+    "thursdai.news",
+    "felloai.com",
+}
+
 
 import httpx
 
@@ -67,6 +79,38 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
                     pass
         return None
 
+    @staticmethod
+    def _clean_query(q: str) -> str:
+        cleaned = q.strip()
+        # 1. Clean Hinglish/Hindi noise and inspection directives
+        hinglish_noise = [
+            r"^\s*(?:bhai\s+)?(?:please\s+)?(?:dhang|dhng|hng|ache|acche|sahi|theek|dobara|fir\s+se)\s+se\s+dekh(?:iye|o)?\s*",
+            r"^\s*(?:bhai\s+)?(?:dekh|dekho|check\s+karo|check\s+kr|khojo|dhundho)\s*",
+            r"\s*(?:dekh\s+ke\s+batao|search\s+karke\s+batao|dhundh\s+ke\s+batao|batao|bata|bataiye|search\s+karo|search\s+kro)\s*$",
+            r"\b(?:kiska\s+hai|kiske\s+liye\s+hai|ke\s+baare\s+me)\b",
+            r"\b(?:hai|tha|thi|h)\b",
+            r"\b(?:bhai|yaar|please)\b",
+        ]
+        for pat in hinglish_noise:
+            cleaned = re.sub(pat, " ", cleaned, flags=re.IGNORECASE)
+
+        # 2. Clean English search prefix noise
+        noise_patterns = [
+            r"^(?:please\s+)?search(\s+and\s+tell(\s+me)?)?(\s+for|\s+about)?\s*",
+            r"^(?:can\s+you\s+)?search(\s+the\s+web(\s+for)?)?\s*",
+            r"^(?:tell\s+me|what\s+is|which\s+is)\s+(?:the\s+)?",
+        ]
+        for pat in noise_patterns:
+            cleaned = re.sub(pat, " ", cleaned, flags=re.IGNORECASE)
+
+        # 3. Normalize common conversational tech terms
+        cleaned = re.sub(r"\bopen\s+ai\b", "OpenAI", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\bdevloper\b", "developer", cleaned, flags=re.IGNORECASE)
+        cleaned = re.sub(r"\bye\b", "", cleaned, flags=re.IGNORECASE)
+        cleaned = " ".join(cleaned.split()).strip()
+
+        return cleaned or q.strip()
+
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
         self.last_answer = None
         api_key = self._get_api_key()
@@ -74,33 +118,50 @@ class TavilyWebSearchProvider(BaseWebSearchProvider):
             logger.debug("Tavily API key not found; skipping Tavily search provider.")
             return []
 
-        lower_q = query.lower()
+        effective_query = self._clean_query(query)
+        lower_q = effective_query.lower()
         is_fresh_query = any(k in lower_q for k in FRESHNESS_KEYWORDS)
 
         payload: Dict[str, Any] = {
             "api_key": api_key,
-            "query": query,
+            "query": effective_query,
             "search_depth": "advanced" if is_fresh_query else "basic",
             "include_answer": True,
-            "max_results": max_results,
+            "exclude_domains": list(SPAM_OR_SPECULATIVE_DOMAINS),
+            "max_results": min(max_results * 2, 10),
         }
 
         try:
-            async with httpx.AsyncClient(timeout=7.0) as client:
+            async with httpx.AsyncClient(timeout=7.5) as client:
                 resp = await client.post("https://api.tavily.com/search", json=payload)
                 if resp.status_code == 200:
                     data = resp.json()
-                    self.last_answer = data.get("answer")
+                    raw_answer = data.get("answer")
+                    # Sanitize hallucinated or speculative answers
+                    if raw_answer:
+                        hallucination_indicators = [
+                            "inventors at amazon", "sol and luna", "gpt-6 astra",
+                            "gpt-5.6", "claude fable", "tier sol", "tier luna"
+                        ]
+                        if not any(h in raw_answer.lower() for h in hallucination_indicators):
+                            self.last_answer = raw_answer
+
                     results: List[Dict[str, Any]] = []
-                    for item in data.get("results", [])[:max_results]:
+                    for item in data.get("results", []):
+                        url = item.get("url") or ""
+                        if any(spam in url.lower() for spam in SPAM_OR_SPECULATIVE_DOMAINS):
+                            continue
                         pub_date = item.get("published_date")
                         results.append({
                             "title": item.get("title") or "Web Page",
-                            "url": item.get("url") or "",
+                            "url": url,
                             "snippet": item.get("content") or "",
                             "published_date": pub_date,
                             "source": "tavily",
                         })
+                        if len(results) >= max_results:
+                            break
+
                     logger.info("Tavily returned %d results for query: %r (has_answer=%s)", len(results), query[:50], bool(self.last_answer))
                     return results
                 else:
@@ -294,39 +355,62 @@ class CompositeWebSearchEngine(BaseWebSearchProvider):
         return self.tavily.last_answer
 
     async def search(self, query: str, max_results: int = 5) -> List[Dict[str, Any]]:
-        # 1. Primary: Tavily AI Search (rich citations + direct AI answer)
+        results: List[Dict[str, Any]] = []
+        seen_urls: set[str] = set()
+
+        # 1. Primary: Tavily AI Search (rich citations + live web with spam filtered)
         try:
-            results = await self.tavily.search(query, max_results=max_results)
-            if results:
-                return results
+            tavily_results = await self.tavily.search(query, max_results=max_results)
+            for r in tavily_results:
+                u = r.get("url") or ""
+                if u and u not in seen_urls:
+                    seen_urls.add(u)
+                    results.append(r)
         except Exception as e:
             logger.warning("Primary Tavily search failed: %s", e)
 
-        # 2. General live web search: DuckDuckGo (zero-key fallback)
-        try:
-            results = await self.duckduckgo.search(query, max_results=max_results)
-            if results:
-                return results
-        except Exception as e:
-            logger.debug("DuckDuckGo search failed: %s", e)
+        # 2. Authoritative Wikipedia grounding for tech, entities, companies, and models
+        lower_q = query.lower()
+        needs_encyclopedia = any(k in lower_q for k in [
+            "openai", "gpt", "o1", "o3", "claude", "gemini", "deepseek", "sora",
+            "model", "company", "ceo", "who is", "what is", "founder", "developer", "history", "release"
+        ])
+        if needs_encyclopedia or len(results) < 2:
+            try:
+                wiki_results = await self.wikipedia.search(query, max_results=2)
+                for w in wiki_results:
+                    u = w.get("url") or ""
+                    if u and u not in seen_urls:
+                        seen_urls.add(u)
+                        results.append(w)
+            except Exception as e:
+                logger.debug("Wikipedia supplemental search failed: %s", e)
 
-        # 3. Authoritative encyclopedia facts: Wikipedia
-        try:
-            results = await self.wikipedia.search(query, max_results=max_results)
-            if results:
-                return results
-        except Exception as e:
-            logger.debug("Wikipedia search failed: %s", e)
+        # 3. Fallback to DuckDuckGo if still insufficient results
+        if len(results) < 2:
+            try:
+                ddg_results = await self.duckduckgo.search(query, max_results=max_results)
+                for d in ddg_results:
+                    u = d.get("url") or ""
+                    if u and u not in seen_urls:
+                        seen_urls.add(u)
+                        results.append(d)
+            except Exception as e:
+                logger.debug("DuckDuckGo search failed: %s", e)
 
-        # 4. News and fresh events fallback: Google News RSS
-        try:
-            results = await self.google_news.search(query, max_results=max_results)
-            if results:
-                return results
-        except Exception as e:
-            logger.debug("Google News RSS search failed: %s", e)
+        # 4. Fallback to Google News RSS for fresh breaking events
+        if len(results) < 2:
+            try:
+                news_results = await self.google_news.search(query, max_results=max_results)
+                for n in news_results:
+                    u = n.get("url") or ""
+                    if u and u not in seen_urls:
+                        seen_urls.add(u)
+                        results.append(n)
+            except Exception as e:
+                logger.debug("Google News RSS search failed: %s", e)
 
-        return []
+        return results[:max_results]
 
 
 

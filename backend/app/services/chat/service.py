@@ -1,5 +1,6 @@
 import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -170,10 +171,20 @@ class ChatService:
             )
             memory_context = retriever.format_memory_context(memories)
 
+        # Build thread-scoped attached document context (native ChatGPT-style document reading)
+        from app.services.chat.document_context import build_thread_document_context
+        attached_docs_context, _ = await build_thread_document_context(
+            session=session,
+            user_id=effective_user_id,
+            thread_id=thread.id,
+            explicit_file_ids=payload.file_ids,
+        )
+
         from app.services.chat.project_context import ProjectContextBuilder
         context_builder = ProjectContextBuilder(
             project=project,
             memory_context=memory_context,
+            attached_docs_context=attached_docs_context,
             thread_summary=thread.summary,
         )
         context = context_builder.assemble(history[-self.settings.max_context_messages :])
@@ -379,10 +390,15 @@ class ChatService:
         if thread is not None:
             thread.updated_at = datetime.now(timezone.utc)
 
+        from app.services.chat.tool_loop import strip_tool_call_markup
+        cleaned_content = strip_tool_call_markup(content, strip_whitespace=True)
+        cleaned_content = re.sub(r"(?:\bTool call:\s*)+$", "", cleaned_content, flags=re.IGNORECASE).strip()
+        final_content = cleaned_content if cleaned_content else "I have completed the requested search and verification."
+
         message = Message(
             thread_id=thread_id,
             role=MessageRole.ASSISTANT,
-            content=content,
+            content=final_content,
             provider=provider_name,
             model=model_name,
             mode=mode,
@@ -502,6 +518,22 @@ class ChatService:
         full_answer_parts: list[str] = []
         start_gen = time.perf_counter()
 
+        # If CRAG didn't find chunks or grader failed, try instant direct document context
+        if not (result.decision == "grounded" and context_text):
+            try:
+                from app.services.chat.document_context import build_thread_document_context
+                fallback_doc_context, _ = await build_thread_document_context(
+                    session=session,
+                    user_id=user_id,
+                    thread_id=thread.id,
+                    explicit_file_ids=payload.file_ids,
+                )
+                if fallback_doc_context and fallback_doc_context.strip():
+                    context_text = fallback_doc_context
+                    result.decision = "grounded"
+            except Exception:
+                pass
+
         if result.decision == "grounded" and context_text:
             try:
                 async for token in orchestrator.answer_generator.stream_answer(
@@ -519,12 +551,45 @@ class ChatService:
                 full_answer_parts.append(fallback_msg)
                 yield text_delta(fallback_msg)
         else:
-            refusal = result.answer or "Based on the provided documents, I cannot find sufficient evidence to answer this."
-            words = refusal.split(" ")
-            for i, word in enumerate(words):
-                token = word + (" " if i < len(words) - 1 else "")
-                full_answer_parts.append(token)
-                yield text_delta(token)
+            # ChatGPT-style graceful fallback:
+            # If the query is outside the document scope, generate a helpful general answer
+            answered_via_general = False
+            try:
+                from app.providers.base import NormalizedMessage
+                sys_msg = (
+                    "You are a helpful AI assistant. The user has asked a question in a conversation. "
+                    "If the query cannot be answered by the uploaded documents, answer directly, accurately, "
+                    "and helpfully using your general knowledge, rather than refusing."
+                )
+                sel = self.router.select_provider(
+                    mode=payload.mode,
+                    requested_provider=payload.provider,
+                    requested_model=payload.model,
+                )
+                async for chunk in sel.provider.stream_chat(
+                    messages=[
+                        NormalizedMessage(role=MessageRole.SYSTEM, content=sys_msg),
+                        NormalizedMessage(role=MessageRole.USER, content=payload.content),
+                    ],
+                    model=sel.model,
+                    temperature=0.7,
+                ):
+                    if await is_disconnected():
+                        break
+                    if chunk.delta:
+                        full_answer_parts.append(chunk.delta)
+                        yield text_delta(chunk.delta)
+                answered_via_general = True
+            except Exception:
+                answered_via_general = False
+
+            if not answered_via_general:
+                refusal = result.answer or "Based on the provided documents, I cannot find sufficient evidence to answer this."
+                words = refusal.split(" ")
+                for i, word in enumerate(words):
+                    token = word + (" " if i < len(words) - 1 else "")
+                    full_answer_parts.append(token)
+                    yield text_delta(token)
 
         final_answer = "".join(full_answer_parts)
         gen_ms = int((time.perf_counter() - start_gen) * 1000)

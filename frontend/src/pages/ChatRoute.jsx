@@ -166,6 +166,7 @@ export default function ChatRoute() {
   const queryClient = useQueryClient();
   const user = useAuthStore((s) => s.user);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const isInitialized = useAuthStore((s) => s.isInitialized);
 
   const toggleContextPanel = useAppStore((s) => s.toggleContextPanel);
   const isSidebarOpen = useAppStore((s) => s.isSidebarOpen);
@@ -209,6 +210,14 @@ export default function ChatRoute() {
     setActiveThreadId(threadId || null);
   }, [threadId, setActiveThreadId]);
 
+  // Auth protection for direct access to existing thread URLs
+  useEffect(() => {
+    const token = localStorage.getItem('tarkai_access_token');
+    if (threadId && ((!isAuthenticated && !token) || (isInitialized && !isAuthenticated))) {
+      navigate('/login', { state: { from: location }, replace: true });
+    }
+  }, [threadId, isAuthenticated, isInitialized, navigate, location]);
+
   const [inputMessage, setInputMessage] = useState('');
 
   // Restore preserved draft prompt after login if present
@@ -226,7 +235,13 @@ export default function ChatRoute() {
       }, 50);
     }
   }, [location.state]);
-  const [localMessages, setLocalMessages] = useState([]);
+  const [localMessages, setLocalMessages] = useState(() => {
+    if (threadId) {
+      const cached = queryClient.getQueryData(['messages', threadId]);
+      if (Array.isArray(cached) && cached.length > 0) return cached;
+    }
+    return [];
+  });
   const [isTemporaryChat, setIsTemporaryChat] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const streamingContentRef = useRef('');
@@ -408,6 +423,7 @@ export default function ChatRoute() {
     queryKey: ['messages', threadId],
     queryFn: () => threadApi.getMessages(threadId),
     enabled: !!threadId,
+    initialData: () => queryClient.getQueryData(['messages', threadId]),
     staleTime: 30_000,   // Don't refetch messages on every focus — they only change when we send
     retry: (failureCount, error) => {
       if (error?.message?.includes('404')) return false;
@@ -429,23 +445,37 @@ export default function ChatRoute() {
     }
   }, [isThreadError, threadError, isMessagesError, messagesError, navigate]);
 
-  // Sync server messages — but don't overwrite while actively streaming
+  // Clear state and sync server messages when switching threads or opening a new chat
   useEffect(() => {
-    if (serverMessages && !isStreaming) {
+    if (prevThreadIdRef.current !== threadId) {
+      const isTransitionFromNewChat = !prevThreadIdRef.current && !!threadId;
+      prevThreadIdRef.current = threadId;
+
+      // Only reset local messages when switching between different existing threads
+      // or when explicitly navigating to a fresh new chat (!threadId).
+      // NEVER wipe local messages when transitioning from new chat to the newly created thread!
+      if (!isTransitionFromNewChat) {
+        setLocalMessages([]);
+        setStreamingDisplay(null);
+        streamingContentRef.current = '';
+        setActiveToolEvents([]);
+        setUploadedFiles([]);
+        setResearchEvents([]);
+        setResearchCitations([]);
+        setResearchImages([]);
+        setResearchMeta(null);
+        setCodingEvents([]);
+        setRagMeta(null);
+      }
+    }
+  }, [threadId]);
+
+  // Sync server messages when thread data arrives
+  useEffect(() => {
+    if (threadId && serverMessages && serverMessages.length > 0 && !isStreaming) {
       setLocalMessages(serverMessages);
     }
-  }, [serverMessages, isStreaming]);
-
-  // Clear state only when genuinely switching to a DIFFERENT thread
-  useEffect(() => {
-    if (prevThreadIdRef.current !== undefined && prevThreadIdRef.current !== threadId) {
-      setLocalMessages([]);
-      setStreamingDisplay(null);
-      streamingContentRef.current = '';
-      setActiveToolEvents([]);
-    }
-    prevThreadIdRef.current = threadId;
-  }, [threadId]);
+  }, [threadId, serverMessages, isStreaming]);
 
   // Auto-scroll: use 'instant' during active streaming to avoid layout thrash from
   // smooth scroll animations running on every RAF tick. Use 'smooth' only for
@@ -506,6 +536,28 @@ export default function ChatRoute() {
     setIsCoding(mode === 'coding');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
+    const rawText = messageText;
+    const finalMessage = messageText.trim();
+
+    const optimisticUserMsg = {
+      id: `opt-${Date.now()}`,
+      role: 'user',
+      content: rawText,   // show original text in UI (without the prefix)
+      created_at: new Date().toISOString(),
+      attachments: filesToSend.map((f) => ({
+        file_id: f.id,
+        filename: f.original_filename,
+        mime_type: f.mime_type,
+        size_bytes: f.size_bytes,
+        extension: f.extension,
+      })),
+    };
+
+    // 1. INSTANT OPTIMISTIC UI: User message and streaming placeholder appear immediately on keydown/click (0ms lag!)
+    setLocalMessages((prev) => [...prev, optimisticUserMsg]);
+    streamingContentRef.current = '';
+    setStreamingDisplay('');
+
     let activeThreadId = threadId;
     let isNewThread = false;
 
@@ -518,9 +570,14 @@ export default function ChatRoute() {
         });
         activeThreadId = newThread.id;
         isNewThread = true;
+        // Pre-populate query client cache so this thread already has data
+        queryClient.setQueryData(['thread', activeThreadId], newThread);
+        queryClient.setQueryData(['messages', activeThreadId], [optimisticUserMsg]);
         queryClient.invalidateQueries({ queryKey: ['threads'] });
       } catch (err) {
         console.error('[ChatRoute] Failed to create thread:', err);
+        setLocalMessages((prev) => prev.filter((m) => m.id !== optimisticUserMsg.id));
+        setStreamingDisplay(null);
         return;
       }
     } else if (!threadData?.title || threadData.title === 'New Conversation' || threadData.title === 'Untitled') {
@@ -534,34 +591,6 @@ export default function ChatRoute() {
         // ignore
       }
     }
-
-    // Prepend web-search instruction if toggle is on
-    const rawText = messageText;   // original text for optimistic UI display
-    const finalMessage = webSearchEnabled
-      ? `[Web Search Enabled] Please search the web for the latest information about: ${messageText}`
-      : messageText;
-
-    // Optimistically show user message
-    setLocalMessages((prev) => [
-      ...prev,
-      {
-        id: `opt-${Date.now()}`,
-        role: 'user',
-        content: rawText,   // show original text in UI (without the prefix)
-        created_at: new Date().toISOString(),
-        attachments: filesToSend.map((f) => ({
-          file_id: f.id,
-          filename: f.original_filename,
-          mime_type: f.mime_type,
-          size_bytes: f.size_bytes,
-          extension: f.extension,
-        })),
-      },
-    ]);
-
-    // Start streaming UI
-    streamingContentRef.current = '';
-    setStreamingDisplay('');
 
     const payload = {
       content: finalMessage,
@@ -620,21 +649,24 @@ export default function ChatRoute() {
         const activeResearchImages = [...researchImages];
         const activeResearchMeta = researchMeta;
 
-        setLocalMessages((prev) => [
-          ...prev,
-          {
-            id: `asst-${Date.now()}`,
-            role: 'assistant',
-            content: finalContent,
-            mode: mode,
-            created_at: new Date().toISOString(),
-            citations: citations.length > 0 ? citations : undefined,
-            research_citations: activeResearchCitations.length > 0 ? activeResearchCitations : undefined,
-            research_images: activeResearchImages.length > 0 ? activeResearchImages : undefined,
-            research_metadata: activeResearchMeta || undefined,
-            ragMeta: currentRagMeta || undefined,
-          },
-        ]);
+        const assistantMsg = {
+          id: `asst-${Date.now()}`,
+          role: 'assistant',
+          content: finalContent,
+          mode: mode,
+          created_at: new Date().toISOString(),
+          citations: citations.length > 0 ? citations : undefined,
+          research_citations: activeResearchCitations.length > 0 ? activeResearchCitations : undefined,
+          research_images: activeResearchImages.length > 0 ? activeResearchImages : undefined,
+          research_metadata: activeResearchMeta || undefined,
+          ragMeta: currentRagMeta || undefined,
+        };
+
+        setLocalMessages((prev) => {
+          const updated = [...prev, assistantMsg];
+          queryClient.setQueryData(['messages', activeThreadId], updated);
+          return updated;
+        });
         setStreamingDisplay(null);
         streamingContentRef.current = '';
         pendingCitationsRef.current = [];
@@ -646,10 +678,10 @@ export default function ChatRoute() {
 
         queryClient.invalidateQueries({ queryKey: ['threads'] });
         queryClient.invalidateQueries({ queryKey: ['thread', activeThreadId] });
-        queryClient.invalidateQueries({ queryKey: ['messages', activeThreadId] });
 
-        // Navigate AFTER streaming so we don't unmount mid-stream
+        // Navigate seamlessly without unmounting
         if (isNewThread) {
+          prevThreadIdRef.current = activeThreadId;
           navigate(`/chat/${activeThreadId}`, { replace: true });
         }
       },
@@ -1292,7 +1324,7 @@ export default function ChatRoute() {
           </div>
         ) : (
           <div className="max-w-3xl mx-auto w-full space-y-6 pb-4">
-            {messagesLoading && (
+            {messagesLoading && localMessages.length === 0 && (
               <div className="text-center text-[#767676] text-sm py-8">Loading messages…</div>
             )}
 
@@ -1427,7 +1459,12 @@ export default function ChatRoute() {
             />
             <div className="flex items-center justify-between mt-3 pt-2.5 border-t border-white/[0.04]">
               <div className="flex items-center gap-1.5">
-                <FileUploader onUploadSuccess={handleUploadSuccess} storageProvider={chatStorageProvider} />
+                <FileUploader
+                  onUploadSuccess={handleUploadSuccess}
+                  storageProvider={chatStorageProvider}
+                  userId={user?.id || DEV_USER_ID}
+                  projectId={activeProjectId || null}
+                />
                 <button
                   type="button"
                   onClick={toggleChatStorageProvider}

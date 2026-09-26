@@ -35,6 +35,8 @@ async def _warmup_ml_models() -> None:
         return
     import asyncio
     try:
+        # Give server time to bind port and accept initial requests before loading ML models
+        await asyncio.sleep(2)
         from app.services.embeddings.bge import LocalBGEEmbeddingProvider
         from app.services.reranking.bge_reranker import warmup_reranker
         await asyncio.to_thread(LocalBGEEmbeddingProvider()._get_model)

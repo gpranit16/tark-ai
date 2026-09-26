@@ -55,6 +55,14 @@ _SYNOPSIS_PATTERNS = [
     r"\bwhat\s+is\s+this\b",
     r"\bwho\s+is\s+this\b",
     r"\bwhat(?:'s|\s+is)\s+in\s+(?:this|here)\b",
+    r"\bwhat\s+(?:content|contents|information)\s+(?:is|are)\s+in\s+this\b",
+    r"\bwhat\s+(?:is|are)\s+(?:the\s+)?content\w*\s+in\s+this\b",
+    r"\bcontent\w*\s+in\s+this\b",
+    r"\bkya\s+(?:hai\s+)?isme\b",
+    r"\bisme\s+kya\s+hai\b",
+    r"\bkya\s+likha\s+hai\b",
+    r"\bye\s+kiske\s+baar?e\s+me\s+hai\b",
+    r"\bpdf\s+me\s+kya\s+hai\b",
     r"\bsummariz\w*\b",
     r"\boverview\b",
     r"\bexplain\s+this\b",
@@ -273,7 +281,7 @@ class CRAGOrchestrator:
             else:
                 t_retry_retrieval_ms += elapsed_ret
 
-            # If document scope is active and query is synopsis and search yielded no chunks, fetch leading chunks
+            # If document scope is active and query is synopsis and search yielded no chunks, fetch leading chunks or instant document text
             if is_synopsis and effective_file_ids and not raw_chunks:
                 lead_stmt = select(DocumentChunk).where(
                     DocumentChunk.file_id.in_(effective_file_ids),
@@ -291,10 +299,33 @@ class CRAGOrchestrator:
                                 content=lc.content,
                                 page_number=lc.page_number,
                                 chunk_index=lc.chunk_index,
-                                similarity_score=0.30,
+                                similarity_score=0.85,
                                 metadata=dict(lc.metadata_) if lc.metadata_ else {},
                             )
                         )
+                else:
+                    # Instant fallback to raw document extraction if chunks are not yet created
+                    try:
+                        from app.services.chat.document_context import extract_file_content_instant
+                        for fid in effective_file_ids:
+                            fname, doc_t, pcount = await extract_file_content_instant(session, fid, user_id)
+                            if doc_t and doc_t.strip():
+                                step = 800
+                                for i, chunk_text in enumerate([doc_t[j:j+step] for j in range(0, min(len(doc_t), 4000), step)]):
+                                    raw_chunks.append(
+                                        RetrievalResult(
+                                            chunk_id=fid,
+                                            file_id=fid,
+                                            project_id=project_id,
+                                            content=chunk_text,
+                                            page_number=1,
+                                            chunk_index=i,
+                                            similarity_score=0.90,
+                                            metadata={"filename": fname, "source": "instant_extraction"},
+                                        )
+                                    )
+                    except Exception as err:
+                        logger.warning("[CRAG] Instant document extraction failed: %s", err)
 
             retrieved_count = max(retrieved_count, len(raw_chunks))
             if debug_mode:

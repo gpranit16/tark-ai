@@ -30,6 +30,7 @@ class ProjectContextBuilder:
         project: Optional[Project] = None,
         memory_context: Optional[str] = None,
         rag_context: Optional[str] = None,
+        attached_docs_context: Optional[str] = None,
         thread_summary: Optional[str] = None,
         max_context_tokens: int = 4000,
     ) -> None:
@@ -37,6 +38,7 @@ class ProjectContextBuilder:
         self.project = project
         self.memory_context = memory_context
         self.rag_context = rag_context
+        self.attached_docs_context = attached_docs_context
         self.thread_summary = thread_summary
         self.max_context_tokens = max_context_tokens
 
@@ -63,11 +65,23 @@ class ProjectContextBuilder:
         if self.memory_context and self.memory_context.strip():
             blocks.append(self.memory_context.strip())
 
-        # 4. RAG / Research Document Context
+        # 4. Attached Thread Documents Context (ChatGPT-style native document QA)
+        if self.attached_docs_context and self.attached_docs_context.strip():
+            blocks.append(
+                "## ATTACHED DOCUMENTS IN THIS CONVERSATION\n"
+                "The user has attached the following document(s) to this chat session:\n\n"
+                f"{self.attached_docs_context.strip()}\n\n"
+                "### GUIDELINES FOR ATTACHED DOCUMENTS:\n"
+                "1. If the user asks about the attached document(s), requests a summary, synopsis, data extraction, or asks any questions covered in the document, answer accurately, thoroughly, and directly using the document text above.\n"
+                "2. If the user asks general questions, coding questions, web search queries, or questions NOT related to the attached document(s), answer naturally and helpfully using your general knowledge or tools. DO NOT refuse to answer just because the query is not in the document.\n"
+                "3. Follow-up questions about the document or earlier conversation should be handled seamlessly."
+            )
+
+        # 5. RAG / Research Document Context
         if self.rag_context and self.rag_context.strip():
             blocks.append(self.rag_context.strip())
 
-        # 5. Conversation History Summary (Older messages)
+        # 6. Conversation History Summary (Older messages)
         if self.thread_summary and self.thread_summary.strip():
             blocks.append(f"[Conversation History Summary]\n{self.thread_summary.strip()}")
 

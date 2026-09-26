@@ -176,16 +176,16 @@ class FileScopeResolver:
                     Message.attachments.isnot(None),
                 )
                 .order_by(Message.created_at.desc())
-                .limit(10)
+                .limit(20)
             )
             msg_res = await session.execute(msg_stmt)
             recent_msgs = list(msg_res.scalars().all())
 
+            all_thread_fids: list[UUID] = []
+            seen_fids: set[UUID] = set()
             for msg in recent_msgs:
                 if not msg.attachments:
                     continue
-                # Extract attachment file_ids
-                att_file_ids: list[UUID] = []
                 for att in msg.attachments:
                     fid_str = (
                         att.get("file_id")
@@ -194,33 +194,35 @@ class FileScopeResolver:
                     )
                     if fid_str:
                         try:
-                            att_file_ids.append(UUID(str(fid_str)))
+                            uid = UUID(str(fid_str))
+                            if uid not in seen_fids:
+                                seen_fids.add(uid)
+                                all_thread_fids.append(uid)
                         except (ValueError, TypeError):
                             pass
 
-                if att_file_ids:
-                    # Verify ownership
-                    val_stmt = select(File).where(
-                        File.id.in_(att_file_ids),
-                        File.user_id == user_id,
+            if all_thread_fids:
+                val_stmt = select(File).where(
+                    File.id.in_(all_thread_fids),
+                    File.user_id == user_id,
+                )
+                val_res = await session.execute(val_stmt)
+                thread_files = list(val_res.scalars().all())
+                if thread_files:
+                    valid_ids = [f.id for f in thread_files]
+                    filenames = [f.original_filename for f in thread_files]
+                    logger.info(
+                        "[ScopeResolver] Priority 3: Resolved from thread history attachments: %s (ids=%s)",
+                        filenames,
+                        valid_ids,
                     )
-                    val_res = await session.execute(val_stmt)
-                    thread_files = list(val_res.scalars().all())
-                    if thread_files:
-                        valid_ids = [f.id for f in thread_files]
-                        filenames = [f.original_filename for f in thread_files]
-                        logger.info(
-                            "[ScopeResolver] Priority 3: Resolved from thread history attachments: %s (ids=%s)",
-                            filenames,
-                            valid_ids,
-                        )
-                        return ResolvedScope(
-                            file_ids=valid_ids,
-                            filenames=filenames,
-                            source="thread_history",
-                            is_document_scoped=True,
-                            refusal_hint=", ".join(filenames),
-                        )
+                    return ResolvedScope(
+                        file_ids=valid_ids,
+                        filenames=filenames,
+                        source="thread_history",
+                        is_document_scoped=True,
+                        refusal_hint=", ".join(filenames),
+                    )
 
         # Deictic reference without thread attachments (e.g. single user file)
         if _DEICTIC_REGEX.search(query_lower) and len(user_files) == 1:

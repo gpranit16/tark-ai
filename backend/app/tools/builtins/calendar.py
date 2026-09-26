@@ -38,9 +38,12 @@ class CheckAvailabilityInput(BaseModel):
 
 
 class CreateCalendarEventInput(BaseModel):
-    title: str = Field(description="Title / Summary of the event.")
-    start_time: str = Field(description="Start time in ISO 8601 format (e.g. '2026-09-12T19:00:00Z').")
-    end_time: str = Field(description="End time in ISO 8601 format (e.g. '2026-09-12T20:00:00Z').")
+    title: Optional[str] = Field(default=None, description="Title / Summary of the event (e.g. 'Team Standup', 'Client Demo').")
+    summary: Optional[str] = Field(default=None, description="Alternative key for title / summary.")
+    name: Optional[str] = Field(default=None, description="Alternative key for title.")
+    start_time: str = Field(description="Start time in ISO 8601 or natural language (e.g. '2026-09-27T10:00:00+05:30', 'tomorrow at 5 PM', '5:30 PM', 'in 2 hours').")
+    end_time: Optional[str] = Field(default=None, description="End time in ISO 8601 or natural language. If omitted, defaults to 30 minutes after start_time.")
+    timezone: Optional[str] = Field(default="Asia/Kolkata", description="Timezone (e.g. 'Asia/Kolkata', 'UTC').")
     description: Optional[str] = Field(default=None, description="Optional description of the event.")
     location: Optional[str] = Field(default=None, description="Optional location for the event.")
 
@@ -86,39 +89,73 @@ def _parse_calendar_datetime(dt_raw: Any, default_offset_days: int = 0) -> str:
     if not dt_raw:
         return ""
     raw = str(dt_raw).strip()
+    local_tz = timezone(timedelta(hours=5, minutes=30))
+    now_local = datetime.now(local_tz)
 
     # 1. Standard ISO format match (e.g. 2026-09-13T13:00:00 or 2026-09-13T13:00:00+05:30)
     iso_match = re.match(r"^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?)(.*)$", raw)
     if iso_match:
-        date_part, time_part, tz_part = iso_match.group(1), iso_match.group(2), iso_match.group(3)
+        date_part, time_part, tz_part = iso_match.group(1), iso_match.group(2), iso_match.group(3).strip()
         if len(time_part) == 5:
             time_part += ":00"
         if tz_part.endswith("Z"):
-            return f"{date_part}T{time_part}+05:30"
+            # UTC to local offset representation
+            return f"{date_part}T{time_part}Z"
         elif re.search(r"[+\-]\d{2}:\d{2}$", tz_part):
             return f"{date_part}T{time_part}{tz_part}"
         return f"{date_part}T{time_part}+05:30"
 
-    # 2. Check for 'tomorrow' or 'today' with time
-    local_tz = timezone(timedelta(hours=5, minutes=30))
-    now_local = datetime.now(local_tz)
+    # 2. Relative time: "in X minutes", "in X hours"
+    rel_match = re.search(r"in\s+(\d+)\s*(min|minute|minutes|hr|hour|hours)", raw, re.IGNORECASE)
+    if rel_match:
+        val = int(rel_match.group(1))
+        unit = rel_match.group(2).lower()
+        if "min" in unit:
+            dt = now_local + timedelta(minutes=val)
+        else:
+            dt = now_local + timedelta(hours=val)
+        return dt.isoformat()
+
+    # 3. Check for weekday: e.g. "monday", "next tuesday", "friday at 4 PM"
+    weekdays = {
+        "monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+        "friday": 4, "saturday": 5, "sunday": 6,
+    }
+    raw_lower = raw.lower()
     base_date = now_local.date() + timedelta(days=default_offset_days)
 
-    raw_lower = raw.lower()
-    if "tomorrow" in raw_lower:
+    if "day after tomorrow" in raw_lower or "parso" in raw_lower:
+        base_date = now_local.date() + timedelta(days=2)
+        raw_lower = raw_lower.replace("day after tomorrow", "").replace("parso", "").replace("at", "").strip()
+    elif "tomorrow" in raw_lower or "kal" in raw_lower:
         base_date = now_local.date() + timedelta(days=1)
-        raw_lower = raw_lower.replace("tomorrow", "").replace("at", "").strip()
-    elif "today" in raw_lower:
+        raw_lower = raw_lower.replace("tomorrow", "").replace("kal", "").replace("at", "").strip()
+    elif "today" in raw_lower or "aaj" in raw_lower:
         base_date = now_local.date()
-        raw_lower = raw_lower.replace("today", "").replace("at", "").strip()
+        raw_lower = raw_lower.replace("today", "").replace("aaj", "").replace("at", "").strip()
+    else:
+        for day_name, day_idx in weekdays.items():
+            if day_name in raw_lower:
+                days_ahead = (day_idx - now_local.weekday() + 7) % 7
+                if days_ahead == 0:
+                    days_ahead = 7
+                base_date = now_local.date() + timedelta(days=days_ahead)
+                raw_lower = raw_lower.replace(f"next {day_name}", "").replace(day_name, "").replace("at", "").strip()
+                break
 
     parsed_time = _parse_time_string(raw_lower)
     if parsed_time:
         hr, mn = parsed_time
+        # If no specific day was passed and time has already passed today, default to next day
+        if base_date == now_local.date() and default_offset_days == 0:
+            if hr < now_local.hour or (hr == now_local.hour and mn < now_local.minute):
+                # If parsed from a bare time like "5 PM" and it's already 6 PM, schedule for tomorrow
+                if "today" not in raw.lower():
+                    base_date = now_local.date() + timedelta(days=1)
         dt = datetime.combine(base_date, time(hr, mn, 0), tzinfo=local_tz)
         return dt.isoformat()
 
-    # Fallback to appending local tz if valid date string
+    # Fallback to appending local tz if valid date string (e.g. 2026-09-27)
     if re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
         return f"{raw}T10:00:00+05:30"
 
@@ -398,16 +435,28 @@ class CreateCalendarEventTool(BaseTool):
                 error="Calendar write permission is required to create events. Please re-authenticate Google Calendar with write permission in Settings -> Connections.",
             )
 
-        title = arguments.get("title") or arguments.get("summary")
-        start_time_raw = arguments.get("start_time")
-        end_time_raw = arguments.get("end_time")
+        title = (
+            arguments.get("title")
+            or arguments.get("summary")
+            or arguments.get("name")
+            or arguments.get("event_name")
+            or arguments.get("task")
+            or "Scheduled Meeting"
+        )
+        start_time_raw = (
+            arguments.get("start_time")
+            or arguments.get("start")
+            or arguments.get("time")
+            or arguments.get("datetime")
+        )
+        end_time_raw = arguments.get("end_time") or arguments.get("end")
         timezone_str = arguments.get("timezone") or "Asia/Kolkata"
 
-        if not title or not start_time_raw:
+        if not start_time_raw:
             return ToolResult(
                 tool_name=self.name,
                 success=False,
-                error="Event 'title' and 'start_time' are required.",
+                error="Event 'start_time' is required (e.g. 'tomorrow at 5 PM' or '2026-09-27T17:00:00+05:30').",
             )
 
         start_time_formatted = _parse_calendar_datetime(start_time_raw, default_offset_days=0)

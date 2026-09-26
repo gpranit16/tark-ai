@@ -21,6 +21,14 @@ _DOC_REFERENCE_PATTERNS = [
     r"\btell\s+me\s+about\s+(?:this|the|that)\s+(?:document|pdf|file|attachment|report|doc)\b",
     r"\breview\s+(?:this|the|that)\s+(?:document|pdf|file|attachment|report|doc)\b",
     r"\baccording\s+to\s+(?:this|the|that)\s+(?:document|pdf|file|attachment|report|doc)\b",
+    r"\bwhat\s+(?:content|contents|information)\s+(?:is|are)\s+in\s+this\b",
+    r"\bwhat\s+(?:is|are)\s+(?:the\s+)?content\w*\s+in\s+this\b",
+    r"\bcontent\w*\s+in\s+this\b",
+    r"\bkya\s+(?:hai\s+)?isme\b",
+    r"\bisme\s+kya\s+hai\b",
+    r"\bkya\s+likha\s+hai\b",
+    r"\bye\s+kiske\s+baar?e\s+me\s+hai\b",
+    r"\bpdf\s+me\s+kya\s+hai\b",
     r"\bpage\s+\d+\b",
 ]
 
@@ -34,7 +42,15 @@ _ATTACHMENT_FOLLOWUP_PATTERNS = [
     r"\bwhat\s+is\s+this\b",
     r"\bwho\s+is\s+this\b",
     r"\bwhat(?:'s|\s+is)\s+in\s+(?:this|here|it)\b",
+    r"\bwhat\s+content\w*\s+(?:is|are)\s+in\s+(?:this|it)\b",
     r"\bwho\s+signed\s+(?:it|this)\b",
+    r"\bkya\s+(?:hai|likha)\s+(?:hai\s+)?(?:isme|ismein)?\b",
+    r"\bye\s+kiske\s+baar?e\s+me\s+hai\b",
+    r"\bpdf\s+me\s+kya\s+hai\b",
+    r"\bdetails?\s+(?:of|in)\s+(?:this|it)\b",
+    r"\bsummary\b",
+    r"\btldr\b",
+    r"\bsummarize\b",
 ]
 
 _COMPILED_FOLLOWUP_PATTERNS = [re.compile(p, re.IGNORECASE) for p in _ATTACHMENT_FOLLOWUP_PATTERNS]

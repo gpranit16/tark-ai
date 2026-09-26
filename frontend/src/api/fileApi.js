@@ -37,7 +37,8 @@ export const fileApi = {
       body: formData,
       headers: {
         'Content-Type': null
-      }
+      },
+      timeout: 120000,
     });
   },
 

@@ -46,16 +46,7 @@ function AppRouter() {
         <Route path="/" element={<Layout />}>
           {/* Public Home Route (Viewing & exploring composer is public) */}
           <Route index element={<ChatRoute />} />
-
-          {/* Protected Routes (Authentication Required) */}
-          <Route
-            path="chat/:threadId"
-            element={
-              <ProtectedRoute>
-                <ChatRoute />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="chat/:threadId" element={<ChatRoute />} />
           <Route
             path="my-space"
             element={

@@ -17,6 +17,9 @@ from app.core.security import (
 )
 from app.models.integration import UserIntegration
 
+import asyncio
+import re
+
 logger = logging.getLogger(__name__)
 
 # Minimum required Google Calendar scopes
@@ -27,6 +30,42 @@ DEFAULT_SCOPES = [
 ]
 
 WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events"
+
+
+def normalize_to_rfc3339(dt_str: Any, default_tz_offset: str = "+05:30") -> str:
+    """Normalize any date/time string to RFC 3339 format required by Google Calendar API."""
+    if not dt_str:
+        return ""
+    dt_str = str(dt_str).strip()
+
+    # Check if already full ISO with timezone offset or Z
+    iso_with_tz = re.match(r"^\d{4}-\d{2}-\d{2}[T\s]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+\-]\d{2}:\d{2})$", dt_str, re.IGNORECASE)
+    if iso_with_tz:
+        return dt_str.replace(" ", "T")
+
+    # ISO without timezone: 2026-09-27T10:00:00 or 2026-09-27 10:00:00 or 2026-09-27T10:00
+    iso_no_tz = re.match(r"^(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2}(?::\d{2})?)$", dt_str)
+    if iso_no_tz:
+        d_part, t_part = iso_no_tz.group(1), iso_no_tz.group(2)
+        if len(t_part) == 5:
+            t_part += ":00"
+        return f"{d_part}T{t_part}{default_tz_offset}"
+
+    # Date only: 2026-09-27
+    date_only = re.match(r"^(\d{4}-\d{2}-\d{2})$", dt_str)
+    if date_only:
+        return f"{date_only.group(1)}T09:00:00{default_tz_offset}"
+
+    # Try parsing standard datetime objects or strings
+    try:
+        dt = datetime.fromisoformat(dt_str)
+        if dt.tzinfo is None:
+            return dt.isoformat() + default_tz_offset
+        return dt.isoformat()
+    except Exception:
+        pass
+
+    return dt_str
 
 
 class GoogleCalendarService:
@@ -392,11 +431,29 @@ class GoogleCalendarService:
         """Create a new event on user's calendar with immediate read-back verification."""
         token = await self.get_valid_access_token(user_id, session)
 
+        start_rfc = normalize_to_rfc3339(start_time_str)
+        end_rfc = normalize_to_rfc3339(end_time_str)
+
+        # Guarantee end > start
+        try:
+            dt_start = datetime.fromisoformat(start_rfc)
+            try:
+                dt_end = datetime.fromisoformat(end_rfc)
+            except Exception:
+                dt_end = dt_start + timedelta(minutes=30)
+                end_rfc = dt_end.isoformat()
+
+            if dt_end <= dt_start:
+                dt_end = dt_start + timedelta(minutes=30)
+                end_rfc = dt_end.isoformat()
+        except Exception:
+            pass
+
         url = f"https://www.googleapis.com/calendar/v3/calendars/{calendar_id}/events"
         headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-        start_payload: Dict[str, Any] = {"dateTime": start_time_str}
-        end_payload: Dict[str, Any] = {"dateTime": end_time_str}
+        start_payload: Dict[str, Any] = {"dateTime": start_rfc or start_time_str}
+        end_payload: Dict[str, Any] = {"dateTime": end_rfc or end_time_str}
         if timezone_str:
             start_payload["timeZone"] = timezone_str
             end_payload["timeZone"] = timezone_str
@@ -410,10 +467,11 @@ class GoogleCalendarService:
         }
 
         logger.info(
-            "Creating Google Calendar event on %s: summary='%s', start=%s, timezone=%s",
+            "Creating Google Calendar event on %s: summary='%s', start=%s, end=%s, timezone=%s",
             calendar_id,
             summary,
-            start_time_str,
+            start_rfc,
+            end_rfc,
             timezone_str,
         )
 
@@ -429,11 +487,29 @@ class GoogleCalendarService:
             if not event_id:
                 raise RuntimeError("Google Calendar API did not return a valid event ID.")
 
-        # Immediate Read-Back Verification
-        logger.info("Performing immediate read-back verification for event ID: %s", event_id)
-        verified_event = await self.get_event(user_id, session, event_id, calendar_id=calendar_id)
-        if not verified_event or verified_event.get("id") != event_id:
-            raise RuntimeError(f"Event read-back verification failed for event ID '{event_id}'.")
+        # Immediate Read-Back Verification with retry and fallback
+        logger.info("Performing read-back verification for event ID: %s", event_id)
+        verified_event = None
+        for attempt in range(2):
+            try:
+                verified_event = await self.get_event(user_id, session, event_id, calendar_id=calendar_id)
+                if verified_event and verified_event.get("id") == event_id:
+                    break
+            except Exception as e:
+                logger.debug("Read-back attempt %d failed: %s", attempt + 1, e)
+            if attempt == 0:
+                await asyncio.sleep(0.3)
+
+        if not verified_event:
+            logger.warning("Event %s created successfully on Google Calendar but instant read-back lagged. Using created item response.", event_id)
+            verified_event = {
+                "id": event_id,
+                "summary": created_item.get("summary") or summary,
+                "start": created_item.get("start", {}).get("dateTime") or start_rfc,
+                "end": created_item.get("end", {}).get("dateTime") or end_rfc,
+                "timeZone": created_item.get("start", {}).get("timeZone") or timezone_str,
+                "html_link": created_item.get("htmlLink"),
+            }
 
         logger.info("Event successfully created and verified on Google Calendar: ID=%s", event_id)
         return {

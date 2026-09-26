@@ -113,6 +113,8 @@ TOOL_ALIASES: dict[str, str] = {
     "trigger_workflow": "github_dispatch_workflow",
 }
 
+TOOL_NAME_ALIASES = TOOL_ALIASES
+
 
 class ToolRegistry:
     """Central registry of all available tools for model discovery and execution."""

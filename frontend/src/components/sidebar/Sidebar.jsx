@@ -118,6 +118,7 @@ export default function Sidebar() {
   const handleNewChat = (e) => {
     e.preventDefault();
     e.stopPropagation();
+    setActiveThreadId(null);
     navigate('/');
   };
 

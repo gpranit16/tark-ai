@@ -93,10 +93,15 @@ def format_tools_system_prompt(
         "## TOOL CALLING INSTRUCTIONS",
         "1. LIVE WEB SEARCH & REAL-TIME FACT GROUNDING (TAVILY):",
         "   - You have access to real-time live web search powered by Tavily AI via `web_search`.",
-        "   - When the user asks you to search (e.g. 'search for...', 'search the web for...', 'google...', 'search karo...'), OR asks about any current developments, recent 2025/2026 events, breaking news, live scores, stock prices, or external facts:",
-        "     * You MUST ALWAYS invoke `<tool_call>{\"name\": \"web_search\", \"arguments\": {\"query\": \"<search query>\"}}</tool_call>` as your immediate response.",
-        "   - When synthesizing results, cite verified sources as markdown links: `[Source Title](URL)` and include the direct answer if available.",
-        "   - NEVER claim that you do not have internet access or cannot browse the live web — you DO have live web access via `web_search`.",
+        "   - When the user asks you to search, or asks about current facts, latest news, recent models/software releases (e.g. OpenAI models, Claude, Gemini, Apple, etc.):",
+        "     * You MUST ALWAYS invoke `<tool_call>{\"name\": \"web_search\", \"arguments\": {\"query\": \"<concise search query>\"}}</tool_call>` as your immediate response.",
+        "     * Use clean, keyword-focused queries (e.g. 'latest OpenAI model released official announcement', not raw conversational sentences).",
+        "   - CRITICAL ZERO-LEAKAGE RULE: When invoking a tool, your entire response MUST be ONLY the `<tool_call>...</tool_call>` block without conversational fluff.",
+        "   - SYNTHESIS & FACT VERIFICATION (CHATGPT STYLE):",
+        "     * Deliver clear, direct, and concise answers immediately from the search findings.",
+        "     * Summarize the latest releases and facts in clean bullet points or a short table with markdown source links: `[Source Name](URL)`.",
+        "     * DO NOT engage in meta-commentary, self-deprecating apologies about earlier turns, or repetitive disclaimers. Answer directly like ChatGPT.",
+        "   - NEVER claim that you do not have internet access or live web access — you DO have access via `web_search`.",
         "",
         "2. OTHER TOOLS & CALCULATIONS:",
         "   - When you need calculations, weather, financial prices, or workspace memories/documents, ALWAYS call the appropriate tool.",
@@ -262,8 +267,40 @@ def _clean_tool_params(params: Any) -> Dict[str, Any]:
     return params
 
 
+KNOWN_CORE_TOOLS = {
+    "calculator", "web_search", "read_url", "get_weather", "convert_currency", "search_news",
+    "get_stock_price", "get_crypto_price", "search_knowledge_base", "search_user_memory",
+    "search_conversation_history", "get_calendar_events", "check_calendar_availability",
+    "create_calendar_event", "delete_calendar_event", "create_task", "list_tasks",
+    "update_task", "complete_task", "delete_task", "create_reminder", "list_reminders", "plan_day",
+}
+
+
+def is_valid_tool_name(name: Any, registry: Optional[ToolRegistry] = None) -> bool:
+    """Validate that candidate tool name is an actual registered tool or valid alias, not conversational text."""
+    if not name or not isinstance(name, str):
+        return False
+    name = name.strip()
+    if not re.match(r"^[a-zA-Z0-9_\-]{2,64}$", name):
+        return False
+    lower_name = name.lower()
+    if lower_name in KNOWN_CORE_TOOLS or lower_name.startswith("github_"):
+        return True
+    try:
+        from app.tools.registry import TOOL_NAME_ALIASES, get_tool_registry
+        canonical = TOOL_NAME_ALIASES.get(lower_name, lower_name)
+        if canonical in KNOWN_CORE_TOOLS:
+            return True
+        reg = registry or get_tool_registry()
+        if reg.has_tool(canonical) or canonical.startswith("github_"):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
-    """Extract tool calls from model output supporting standard JSON, Qwen ChatML, XML, and Codeblock formats."""
+    """Extract tool calls from model output supporting standard JSON, Qwen ChatML, XML, Codeblock, and NL intent formats."""
     calls: List[Tuple[str, Dict[str, Any]]] = []
 
     # 1. Qwen format: <tool_call> <function=web_search> {"query": ...} </tool_call>
@@ -274,6 +311,8 @@ def parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
     )
     for fn_name, raw_content in qwen_fn_matches:
         fn_name = fn_name.strip()
+        if not is_valid_tool_name(fn_name):
+            continue
         raw_content = raw_content.strip()
         json_match = re.search(r"({[\s\S]*})", raw_content)
         if json_match:
@@ -308,75 +347,37 @@ def parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
         fn_match = re.search(r"<function=([a-zA-Z0-9_\-]+)>\s*([\s\S]*)", block, re.IGNORECASE)
         if fn_match:
             fn_name = fn_match.group(1).strip()
-            rest = fn_match.group(2).strip()
-            rest = re.sub(r"</function>$", "", rest, flags=re.IGNORECASE).strip()
-            json_match = re.search(r"({[\s\S]*})", rest)
-            if json_match:
-                try:
-                    params = json.loads(json_match.group(1))
-                    if isinstance(params, dict):
-                        params = _clean_tool_params(params)
-                        calls.append((fn_name, params))
-                        continue
-                except Exception:
-                    pass
+            if is_valid_tool_name(fn_name):
+                rest = fn_match.group(2).strip()
+                rest = re.sub(r"</function>$", "", rest, flags=re.IGNORECASE).strip()
+                json_match = re.search(r"({[\s\S]*})", rest)
+                if json_match:
+                    try:
+                        params = json.loads(json_match.group(1))
+                        if isinstance(params, dict):
+                            params = _clean_tool_params(params)
+                            calls.append((fn_name, params))
+                            continue
+                    except Exception:
+                        pass
 
         json_match = re.search(r"({[\s\S]*})", block)
         if json_match:
             try:
                 parsed = json.loads(json_match.group(1))
                 name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-                params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or parsed.get("input")
-                if params is None:
-                    params = {k: v for k, v in parsed.items() if k not in ("name", "tool", "function")}
-                params = _clean_tool_params(params)
-                if name and not any(c[0] == name for c in calls):
-                    calls.append((name, params))
+                if is_valid_tool_name(name):
+                    params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or parsed.get("input")
+                    if params is None:
+                        params = {k: v for k, v in parsed.items() if k not in ("name", "tool", "function")}
+                    params = _clean_tool_params(params)
+                    if name and not any(c[0] == name for c in calls):
+                        calls.append((name, params))
             except Exception as err:
                 logger.debug("Failed parsing tool_call JSON: %s (%s)", block, err)
 
-    # 3. Bare JSON tool call fallback (e.g. Nemotron outputting {"name": "...", "arguments": ...})
-    if not calls:
-        start_indices = [i for i, ch in enumerate(text) if ch == "{"]
-        for start in start_indices:
-            if start >= len(text) or text[start] != "{":
-                continue
-            depth = 0
-            in_str = False
-            escape = False
-            for end in range(start, len(text)):
-                ch = text[end]
-                if escape:
-                    escape = False
-                    continue
-                if ch == "\\":
-                    escape = True
-                    continue
-                if ch == '"':
-                    in_str = not in_str
-                    continue
-                if not in_str:
-                    if ch == "{":
-                        depth += 1
-                    elif ch == "}":
-                        depth -= 1
-                        if depth == 0:
-                            candidate = text[start : end + 1]
-                            try:
-                                parsed = json.loads(candidate)
-                                if isinstance(parsed, dict) and (parsed.get("name") or parsed.get("tool") or parsed.get("function")):
-                                    name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-                                    params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or {}
-                                    if isinstance(params, dict):
-                                        params = _clean_tool_params(params)
-                                        if name and not any(c[0] == name for c in calls):
-                                            calls.append((name, params))
-                            except Exception:
-                                pass
-                            break
-
-    return calls
-
+    if calls:
+        return calls
 
     # 3. <function_call> ... </function_call>
     fc_blocks = re.findall(r"<function_call>\s*([\s\S]*?)\s*</function_call>", text, re.IGNORECASE)
@@ -386,10 +387,11 @@ def parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
             try:
                 parsed = json.loads(json_match.group(1))
                 name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-                params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or {}
-                params = _clean_tool_params(params)
-                if name:
-                    calls.append((name, params))
+                if is_valid_tool_name(name):
+                    params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or {}
+                    params = _clean_tool_params(params)
+                    if name and not any(c[0] == name for c in calls):
+                        calls.append((name, params))
             except Exception:
                 pass
 
@@ -402,21 +404,24 @@ def parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
         try:
             parsed = json.loads(raw_json)
             name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-            params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments")
-            if params is None:
-                params = {k: v for k, v in parsed.items() if k not in ("name", "tool", "function")}
-            params = _clean_tool_params(params)
-            if name:
-                calls.append((name, params))
+            if is_valid_tool_name(name):
+                params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments")
+                if params is None:
+                    params = {k: v for k, v in parsed.items() if k not in ("name", "tool", "function")}
+                params = _clean_tool_params(params)
+                if name and not any(c[0] == name for c in calls):
+                    calls.append((name, params))
         except Exception as err:
             logger.debug("Failed parsing codeblock tool call: %s (%s)", raw_json, err)
 
     if calls:
         return calls
 
-    # 5. Bare JSON objects without tags: {"name": "search_news", "arguments": ...}
+    # 5. Bare JSON objects without tags: {"name": "web_search", "arguments": ...}
     start_indices = [i for i, ch in enumerate(text) if ch == "{"]
     for start in start_indices:
+        if start >= len(text) or text[start] != "{":
+            continue
         depth = 0
         in_str = False
         escape = False
@@ -440,17 +445,37 @@ def parse_tool_calls(text: str) -> List[Tuple[str, Dict[str, Any]]]:
                         candidate = text[start : end + 1]
                         try:
                             parsed = json.loads(candidate)
-                            if isinstance(parsed, dict):
+                            if isinstance(parsed, dict) and (parsed.get("name") or parsed.get("tool") or parsed.get("function")):
                                 name = parsed.get("name") or parsed.get("tool") or parsed.get("function")
-                                if name and isinstance(name, str):
-                                    params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments")
-                                    if params is None:
-                                        params = {k: v for k, v in parsed.items() if k not in ("name", "tool", "function")}
-                                    params = _clean_tool_params(params)
-                                    calls.append((name, params))
+                                if is_valid_tool_name(name):
+                                    params = parsed.get("parameters") or parsed.get("params") or parsed.get("arguments") or {}
+                                    if isinstance(params, dict):
+                                        params = _clean_tool_params(params)
+                                        if name and not any(c[0] == name for c in calls):
+                                            calls.append((name, params))
                         except Exception:
                             pass
                         break
+
+    if calls:
+        return calls
+
+    # 6. Natural Language Search Intent Rescue:
+    # When models talk in 3rd person or output natural intent instead of tags
+    # e.g. "The user is asking about an AI model named 'Astra'... I need to search the live web to find out what AI model 'Astra' is."
+    nl_match = re.search(
+        r"(?:i\s+(?:need\s+to|should|must|will)\s+search(?:\s+(?:the\s+)?(?:live\s+)?web|\s+online)?\s+(?:to\s+find\s+out|for)?|let\s+me\s+search(?:\s+(?:the\s+)?(?:live\s+)?web|\s+online)?\s+for)\s+([^\.\n]+)",
+        text,
+        re.IGNORECASE,
+    )
+    if nl_match:
+        raw_target = nl_match.group(1).strip().strip("'\"`")
+        target = re.sub(r"^(?:what|who|which)\s+", "", raw_target, flags=re.IGNORECASE)
+        target = re.sub(r"\s+is\s*$", "", target, flags=re.IGNORECASE).strip()
+        target = target.strip("'\"` ")
+        if target and len(target) >= 2:
+            logger.info("Rescued natural language web search intent from model output: %r", target)
+            calls.append(("web_search", {"query": target}))
 
     return calls
 
@@ -463,16 +488,22 @@ def strip_think_markup(text: str, strip_whitespace: bool = False) -> str:
         "",
         cleaned,
     )
+    # Suppress third-person scratchpad leakage (e.g. "The user is asking about an AI model...")
+    cleaned = re.sub(
+        r"(?i)(?:The user is asking|The user wants to|I need to search the (?:live )?web|I will search the (?:live )?web)[\s\S]*?(?=(?:\n\n)|\Z)",
+        "",
+        cleaned,
+    )
     return cleaned.strip() if strip_whitespace else cleaned
 
 
 def strip_tool_call_markup(text: str, strip_whitespace: bool = False) -> str:
     """Remove all tool call markup, XML tags, bare tool JSONs, and thinking tags so only clean response remains."""
-    cleaned = re.sub(r"`*<tool_call>[\s\S]*?</tool_call>`*", "", text, flags=re.IGNORECASE)
-    cleaned = re.sub(r"<tool_call>[\s\S]*?(?:</tool_call>|(?=<tool_call>)|\Z)", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"`*<function_call>[\s\S]*?</function_call>`*", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"<function_call>[\s\S]*?(?:</function_call>|(?=<function_call>)|\Z)", "", cleaned, flags=re.IGNORECASE)
-    cleaned = re.sub(r"`*<function=[^>]+>[\s\S]*?(?:</function>|(?=<function=)|\Z)`*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:Tool call:\s*)?`*<tool_call>[\s\S]*?</tool_call>`*", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:Tool call:\s*)?`*<tool_call>[\s\S]*?(?:</tool_call>|(?=<tool_call>)|\Z)`*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:Tool call:\s*)?`*<function_call>[\s\S]*?</function_call>`*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:Tool call:\s*)?`*<function_call>[\s\S]*?(?:</function_call>|(?=<function_call>)|\Z)`*", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:Tool call:\s*)?`*<function=[^>]+>[\s\S]*?(?:</function>|(?=<function=)|\Z)`*", "", cleaned, flags=re.IGNORECASE)
     cleaned = JSON_CODEBLOCK_TOOL_REGEX.sub("", cleaned)
     cleaned = strip_think_markup(cleaned, strip_whitespace=strip_whitespace)
 
@@ -511,6 +542,8 @@ def strip_tool_call_markup(text: str, strip_whitespace: bool = False) -> str:
                         break
 
     cleaned = re.sub(r"</?(?:tool_call|function_call|function|parameter)[^>]*>", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:\bTool call:\s*)+$", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"^\s*(?:Tool call:\s*)+", "", cleaned, flags=re.IGNORECASE)
     return cleaned.strip() if strip_whitespace else cleaned
 
 
@@ -563,9 +596,16 @@ def is_conversational_query(content: str) -> bool:
 
 
 _PRONOUN_PATTERN = _re.compile(
-    r"\b(he|she|it|they|his|her|its|their|him|them)\b",
+    r"\b(he|she|it|they|his|her|its|their|him|them|ye|yeh|wo|woh|iska|iske|iski|unka|inke)\b",
     _re.IGNORECASE,
 )
+
+KNOWN_TECH_ENTITIES = {
+    "astra", "project astra", "sora", "o1", "o1-mini", "o3", "o3-mini", "o4",
+    "gpt-4o", "gpt-4.5", "gpt-5", "claude", "gemini", "deepseek", "perplexity",
+    "midjourney", "flux", "runway", "elevenlabs", "cursor", "windsurf", "devin",
+    "grok", "llama", "mistral", "qwen", "chatgpt", "copilot"
+}
 
 _SEARCH_SUFFIX_PATTERN = _re.compile(
     r"\s+(?:search\s+latest|search\s+now|search\s+online|search\s+karo|search\s+kro|khojo|google\s+karo|search\s+karke\s+batao|search\s+pe|online\s+search|find\s+online|on\s+the\s+web|search)\s*$",
@@ -588,7 +628,18 @@ def extract_primary_subject_from_history(messages: Optional[List[NormalizedMessa
         if not content:
             continue
 
-        # 1. User questions like "who is <Subject>" or "tell me about <Subject>"
+        # 1. Hindi/Hinglish entity inquiry e.g. "astra kya tha fir", "sora kya hai"
+        m_hi = _re.search(
+            r"\b([A-Za-z0-9\.\-_]{2,30})\s+(?:kya\s+tha(?:\s+fir)?|kya\s+hai|kiske\s+liye\s+hai|kab\s+aaya|kab\s+release|kab\s+launch|kisne\s+banaya|ke\s+baare\s+me)\b",
+            content,
+            _re.IGNORECASE,
+        )
+        if m_hi:
+            subj = m_hi.group(1).strip()
+            if subj.lower() not in {"ye", "yeh", "wo", "woh", "kya", "batao", "this", "that"}:
+                return subj
+
+        # 2. User questions like "who is <Subject>" or "tell me about <Subject>"
         m = _re.search(
             r"\b(?:who\s+is|what\s+is|tell\s+me\s+about|know\s+about)\s+([A-Za-z0-9\s\.\-]{2,40})",
             content,
@@ -601,16 +652,26 @@ def extract_primary_subject_from_history(messages: Optional[List[NormalizedMessa
             if subj and len(subj) > 2 and subj.lower() not in {"this", "that", "it", "he", "she"}:
                 return subj
 
-        # 2. Assistant message opening, e.g. "Virat Kohli is an Indian..."
+        # 3. Known tech entities in content
+        for entity in KNOWN_TECH_ENTITIES:
+            if _re.search(r"\b" + _re.escape(entity) + r"\b", content, _re.IGNORECASE):
+                return entity.title()
+
+        # 4. Quoted terms
+        m_q = _re.search(r"['\"]([A-Za-z0-9\s\.\-_]{2,30})['\"]", content)
+        if m_q:
+            return m_q.group(1).strip()
+
+        # 5. Assistant message opening, e.g. "Virat Kohli is an Indian..."
         if msg.role == MessageRole.ASSISTANT:
             m_cap = _re.search(r"^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)", content)
             if m_cap:
                 return m_cap.group(1).strip()
 
-        # 3. Capitalized proper nouns
-        proper_nouns = _re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)\b", content)
+        # 6. Capitalized proper nouns
+        proper_nouns = _re.findall(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b", content)
         for pn in proper_nouns:
-            if pn.lower() not in {"google calendar", "google news", "tark ai", "duckduckgo", "united states"}:
+            if len(pn) > 2 and pn.lower() not in {"google calendar", "google news", "tark ai", "duckduckgo", "united states", "the", "what", "when", "how", "here", "there"}:
                 return pn.strip()
 
     return ""
@@ -629,9 +690,32 @@ def contextualize_search_query(
     query = _SEARCH_PREFIX_PATTERN.sub("", query).strip()
     query = _SEARCH_SUFFIX_PATTERN.sub("", query).strip()
 
+    # Strip Hinglish inspection and critique directives (e.g. "hng se dekh", "dhang se dekh", "bhai dekh")
+    hinglish_prefixes = [
+        r"^\s*(?:bhai\s+)?(?:please\s+)?(?:dhang|dhng|hng|ache|acche|sahi|theek|dobara|fir\s+se)\s+se\s+dekh(?:iye|o)?\s*",
+        r"^\s*(?:bhai\s+)?(?:dekh|dekho|check\s+karo|check\s+kr|khojo|dhundho)\s*",
+        r"^\s*(?:ye|yeh)\s+",
+    ]
+    for hp in hinglish_prefixes:
+        query = _re.sub(hp, "", query, flags=_re.IGNORECASE).strip()
+
+    # Normalize common tech terms & drop conversational Hinglish filler
+    query = _re.sub(r"\bopen\s+ai\b", "OpenAI", query, flags=_re.IGNORECASE)
+    query = _re.sub(r"\bdevloper\b", "developer", query, flags=_re.IGNORECASE)
+    query = _re.sub(r"\b(?:kiska\s+hai|kiske\s+liye\s+hai|ke\s+baare\s+me)\b", " ", query, flags=_re.IGNORECASE)
+    query = _re.sub(r"\b(?:hai|tha|thi|h)\b", " ", query, flags=_re.IGNORECASE)
+    query = _re.sub(r"\b(?:bhai|yaar|please)\b", " ", query, flags=_re.IGNORECASE)
+    query = " ".join(query.split()).strip()
+
     # Strip question filler like "what are", "what is", "can you tell me"
     query = _re.sub(
         r"^(?:what\s+are\s+|what\s+is\s+|can\s+you\s+tell\s+me\s+|tell\s+me\s+|how\s+many\s+)",
+        "",
+        query,
+        flags=_re.IGNORECASE,
+    ).strip()
+    query = _re.sub(
+        r"\s+(?:kya\s+tha(?:\s+fir)?|kya\s+hai|kiske\s+liye\s+hai|kab\s+aaya|kab\s+release|kab\s+launch|kisne\s+banaya|ke\s+baare\s+me|batao|bata)\s*$",
         "",
         query,
         flags=_re.IGNORECASE,
@@ -642,11 +726,11 @@ def contextualize_search_query(
     has_pronouns = bool(_PRONOUN_PATTERN.search(query))
     is_fragment = (
         len(query.split()) <= 4
-        and not any(ch.isupper() for ch in query)
         and any(
             w in query.lower()
             for w in [
-                "centuries", "runs", "stats", "price", "age", "height", "wife",
+                "model", "ai", "tool", "app", "price", "founder", "features", "release", "details",
+                "centuries", "runs", "stats", "age", "height", "wife",
                 "records", "ceo", "net worth", "score", "matches", "family", "born"
             ]
         )
@@ -657,8 +741,18 @@ def contextualize_search_query(
         if subject:
             if has_pronouns:
                 query = _PRONOUN_PATTERN.sub(subject, query)
+                query = _re.sub(r"\bhai\b", "", query, flags=_re.IGNORECASE).strip()
+                if "model" in query.lower() and "ai" not in query.lower():
+                    query = f"{query} AI"
             elif is_fragment:
                 query = f"{subject} {query}"
+
+    # If query is a single known entity without qualifiers (e.g. "astra"), qualify it
+    q_lower = query.lower()
+    if q_lower in {"astra", "project astra"}:
+        query = "Google Project Astra AI model"
+    elif q_lower in KNOWN_TECH_ENTITIES and "model" not in q_lower and "ai" not in q_lower:
+        query = f"{query} AI model"
 
     return query.strip() or raw_query.strip()
 
@@ -833,10 +927,50 @@ def detect_web_search_intent(
     freshness_indicators = [
         r"\b(latest|recent|today'?s?|yesterday'?s?|breaking|now|this\s+week|this\s+month|new\s+release|update|updates|announcement|2025|2026)\b",
         r"\b(who\s+is\s+(?:the\s+)?(?:current|new|present)\b|who\s+won\b|current\s+(?:price|status|ceo|prime\s+minister|president)|stock\s+price|crypto\s+price|weather\s+in|match\s+score|election\s+result|release\s+date\s+of)\b",
-        r"\b(deepseek|qwen\s*2\.5|claude\s*3\.7|gemini\s*2|gpt-4\.5|gpt-5|llama\s*3\.[123]|rtx\s*50\d0|starship\s*flight|artemis)\b",
+        r"\b(astra|project\s+astra|sora|o1|o1-mini|o3|o3-mini|o4|gpt-4o|gpt-4\.5|gpt-5|claude\s*3(?:\.5|\.7)?|gemini\s*(?:1\.5|2|2\.5|3)?|deepseek(?:\s*v3|\s*r1)?|qwen\s*2\.5|llama\s*3\.[123]|rtx\s*50\d0|starship\s*flight|artemis|perplexity|midjourney|elevenlabs|cursor|windsurf|devin|grok)\b",
     ]
 
     for pat in freshness_indicators:
+        if _re.search(pat, lower):
+            cleaned_query = contextualize_search_query(stripped, messages)
+            return True, cleaned_query or stripped
+
+    # 5. Hindi/Hinglish entity inquiry patterns (e.g. "astra kya tha fir", "sora kya hai", "o3 ke baare me")
+    hinglish_inquiry_patterns = [
+        r"\b([a-zA-Z0-9_\-\.]{2,30})\s+(?:kya\s+tha(?:\s+fir)?|kya\s+hai|kiske\s+liye\s+hai|kab\s+aaya|kab\s+release|kab\s+launch|kisne\s+banaya|ke\s+baare\s+me|batao|bata)\b",
+        r"\b(?:kya\s+tha|kya\s+hai|batao|bata)\s+([a-zA-Z0-9_\-\.]{2,30})\b",
+    ]
+    for pat in hinglish_inquiry_patterns:
+        m = _re.search(pat, stripped, flags=_re.IGNORECASE)
+        if m:
+            entity = m.group(1).strip()
+            if entity.lower() not in {"ye", "yeh", "wo", "woh", "kya", "this", "that", "it", "code", "file", "repo", "task"}:
+                cleaned_query = contextualize_search_query(stripped, messages)
+                return True, cleaned_query or f"{entity} AI model overview"
+
+    # 6. Multi-turn follow-ups & pronoun clarifications (e.g. "ye model hai", "details batao", "who made it")
+    follow_up_tokens = [
+        "model hai", "ye model", "ai model", "tool hai", "app hai", "who made",
+        "when was", "details batao", "kab aaya", "kiska hai", "kis company",
+    ]
+    is_follow_up = any(tok in lower for tok in follow_up_tokens) or (
+        len(stripped.split()) <= 4 and bool(_PRONOUN_PATTERN.search(lower))
+    )
+    if is_follow_up and messages:
+        subject = extract_primary_subject_from_history(messages)
+        if subject:
+            cleaned_query = contextualize_search_query(stripped, messages)
+            return True, cleaned_query or f"{subject} AI model"
+
+    # 7. Hindi/Hinglish search directives & entity release verification triggers
+    hinglish_search_triggers = [
+        r"\b(?:dhang|dhng|hng|ache|acche|sahi|theek|dobara|fir\s+se)\s+se\s+dekh\b",
+        r"\b(?:dekh\s+ye|check\s+karo|check\s+kr|dhundho|khojo)\b",
+        r"\b(?:open\s*ai|openai|anthropic|google|meta|microsoft|deepseek|apple)\b.*\b(?:release|released|launch|launched|developer|model|api|announced)\b",
+        r"\b(?:release|released|launch|launched)\s+(?:in|on)\s+(?:january|february|march|april|may|june|july|august|september|october|november|december)\b",
+        r"\b(?:galat\s+hai|wrong\s+hai|glt\s+pe\s+glt|glt\s+result|galt\s+result|ye\s+nahi\s+hai)\b",
+    ]
+    for pat in hinglish_search_triggers:
         if _re.search(pat, lower):
             cleaned_query = contextualize_search_query(stripped, messages)
             return True, cleaned_query or stripped
@@ -943,11 +1077,16 @@ class ToolCallOrchestrator:
             synthesis_directive = (
                 "\n\n[STRICT SYNTHESIS DIRECTIVE - WEB SEARCH]:\n"
                 "- Answer the user's question directly, clearly, and comprehensively using the search results.\n"
-                "- Provide an accurate, well-structured answer in clean markdown with key statistics, career numbers, and facts highlighted.\n"
+                "- Provide an accurate, well-structured answer in clean markdown with key details, release dates, and facts highlighted.\n"
                 "- Cite verified sources using clickable markdown links in the format [Source Title](URL).\n"
-                "- CRITICAL: Never refuse to answer with statements like 'I was unable to find any information' or merely provide external links when the question is about well-known public figures, athletes, historical events, or established facts. Always provide the best, most accurate answer directly to the user.\n"
+                "- FACTUAL ACCURACY ON OPENAI & AI MODELS:\n"
+                "  * Clarify verified releases: OpenAI o1 series (o1-preview, o1-mini released on September 12, 2024 for developers and ChatGPT Plus/Team users; first reasoning models), GPT-4o (May 2024), OpenAI DevDay developer conferences (held in September/October with Realtime API, prompt caching, vision fine-tuning), Whisper (September 2022), and ChatGPT (November 2022).\n"
+                "  * If search snippets mention speculative future predictions or simulated timelines (such as 'Sol/Terra tiers', 'GPT-5.6', or fan trackers), distinguish them clearly from verified official releases.\n"
+                "  * Note that Project Astra is Google DeepMind's real-time multimodal AI assistant, NOT an OpenAI model.\n"
+                "- NO INTERNAL DEBATES OR APOLOGY ESSAYS: Answer directly, objectively, and politely like ChatGPT without arguing about earlier turns or apologizing.\n"
+                "- CRITICAL: Never refuse to answer with statements like 'I was unable to find any information' or merely provide external links when the question is about well-known public figures, tech releases, historical events, or established facts.\n"
                 "- Do NOT output any `<tool_call>` tags, JSON tool objects, or XML tool markup.\n"
-                "- Keep the tone helpful, objective, and well-structured."
+                "- Keep the tone helpful, objective, crisp, and well-structured."
             )
 
             cur_messages = list(messages)
@@ -1101,6 +1240,10 @@ class ToolCallOrchestrator:
             "<tool_call",
             "<function",
             "<function_call",
+            "Tool call:",
+            "Tool call",
+            "Tool Call:",
+            "`<tool_call",
             "```json",
             '{"name"',
             '{"tool"',
@@ -1171,10 +1314,24 @@ class ToolCallOrchestrator:
                                 if has_partial_think and len(stream_buffer) <= len("<think>"):
                                     break
 
-                                # 3. Check for tool call markers
+                                # 3. Check for tool call markers anywhere in stream_buffer
+                                tool_call_pattern = re.search(
+                                    r"(?i)(?:Tool call:\s*)?`*<(?:tool_call|function_call|function)\b|```(?:json)?\s*\{\s*\"(?:tool|name|function)\"|(?:\bTool call:\s*)",
+                                    stream_buffer,
+                                )
+                                if tool_call_pattern:
+                                    # Safely yield any clean text that appeared BEFORE the tool call
+                                    pre_text = stream_buffer[:tool_call_pattern.start()]
+                                    clean_pre = strip_tool_call_markup(pre_text, strip_whitespace=False)
+                                    if clean_pre:
+                                        yield text_delta(clean_pre)
+                                        streamed_any = True
+                                    is_tool_call_detected = True
+                                    stream_buffer = ""
+                                    break
+
                                 stripped_buf = stream_buffer.lstrip()
-                                tool_indicators = _tool_indicators
-                                is_tool_start = any(stripped_buf.startswith(ind) for ind in tool_indicators) or bool(
+                                is_tool_start = any(stripped_buf.startswith(ind) for ind in _tool_indicators) or bool(
                                     re.search(r'["\']?(?:name|tool|function)["\']?\s*:', stripped_buf)
                                 )
                                 is_potential_tool = any(
@@ -1190,8 +1347,8 @@ class ToolCallOrchestrator:
                                     # Wait for more tokens to be certain whether it is a tool call
                                     break
 
-                                # 4. Suppress untagged markdown thinking process (e.g. "Here's a thinking process: ... \n\n")
-                                if re.match(r"^\s*(?:Here'?s a thinking process:?|Thinking Process:?|Thought Process:?)", stream_buffer, re.IGNORECASE):
+                                # 4. Suppress untagged markdown thinking process or 3rd-person scratchpads (e.g. "The user is asking...", "I need to search...")
+                                if re.match(r"^\s*(?:Here'?s a thinking process:?|Thinking Process:?|Thought Process:?|The user is asking|The user wants to|I need to search|I should search|Let me search|I will search|In order to answer)", stream_buffer, re.IGNORECASE):
                                     if "\n\n" in stream_buffer:
                                         _, _, stream_buffer = stream_buffer.partition("\n\n")
                                         continue
@@ -1241,9 +1398,11 @@ class ToolCallOrchestrator:
             if not tool_calls:
                 # No tool call needed -> final answer reached
                 if not streamed_any:
-                    clean_text = strip_tool_call_markup(raw_text, strip_whitespace=True) or raw_text
+                    clean_text = strip_tool_call_markup(raw_text, strip_whitespace=True)
                     if clean_text:
                         yield text_delta(clean_text)
+                    else:
+                        logger.warning("Tool loop iteration %d: model produced unparsable tool markup with no plain text; providing safe fallback.", iteration)
                 return
 
             # Tool calls detected! Execute each tool sequentially with loop & duplicate protection

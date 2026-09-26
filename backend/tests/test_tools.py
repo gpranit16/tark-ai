@@ -309,3 +309,35 @@ def test_rest_api_execute_tool_with_parameters_alias(client):
     res = response.json()
     assert res["success"] is True
     assert res["data"]["result"] == 750
+
+
+def test_detect_web_search_intent_hinglish_and_multiturn():
+    from app.providers.base import MessageRole, NormalizedMessage
+    from app.services.chat.tool_loop import detect_web_search_intent
+
+    # 1. Hindi/Hinglish entity inquiry
+    should_search, query = detect_web_search_intent("astra kya tha fir", messages=[])
+    assert should_search is True
+    assert "astra" in query.lower()
+
+    # 2. Multi-turn follow-up with pronoun & clarification
+    history = [
+        NormalizedMessage(role=MessageRole.USER, content="astra kya tha fir"),
+        NormalizedMessage(role=MessageRole.ASSISTANT, content="'Astra' refers to DARPA Astra or Astra Linux."),
+    ]
+    should_search_followup, query_followup = detect_web_search_intent("ye model hai", messages=history)
+    assert should_search_followup is True
+    assert "astra" in query_followup.lower()
+    assert "model" in query_followup.lower()
+
+
+def test_parse_tool_calls_natural_language_intent_rescue():
+    raw_thought = (
+        'The user is asking about an AI model named "Astra". I previously guessed several possibilities, '
+        'but the user is specifically asking about a model named Astra. I need to search the live web to find out what AI model "Astra" is.'
+    )
+    calls = parse_tool_calls(raw_thought)
+    assert len(calls) == 1
+    assert calls[0][0] == "web_search"
+    assert "astra" in calls[0][1]["query"].lower()
+
