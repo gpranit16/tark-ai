@@ -366,6 +366,14 @@ class ResearchSynthesizer:
         clean_output = re.sub(r"<think>[\s\S]*?(?:</think>|$)", "", raw_text).strip()
         if not clean_output and raw_text.strip():
             clean_output = raw_text.replace("<think>", "").replace("</think>", "").strip()
+
+        # Strip untagged thinking process scratchpads before the actual report headers
+        if "## Executive Summary" in clean_output:
+            _, _, after_header = clean_output.partition("## Executive Summary")
+            clean_output = "## Executive Summary" + after_header
+        elif re.search(r"^\s*(?:Here'?s a thinking process:?|Thinking Process:?|Thought Process:?)\b", clean_output, re.IGNORECASE):
+            clean_output = re.sub(r"^\s*(?:Here'?s a thinking process:?|Thinking Process:?|Thought Process:?)[\s\S]*?(?=(?:^##|\n##|\Z))", "", clean_output, flags=re.IGNORECASE).strip()
+
         return clean_output, finish_reason
 
     def _generate_grounded_fallback_report(
