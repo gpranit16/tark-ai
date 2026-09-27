@@ -122,10 +122,10 @@ def format_tools_system_prompt(
             "     * You MUST ALWAYS invoke `<tool_call>{\"name\": \"get_calendar_events\", \"arguments\": {\"time_frame\": \"...\"}}</tool_call>` as your immediate action.",
             "   - When the user asks 'Am I free at 5 PM?' or queries availability:",
             "     * You MUST ALWAYS invoke `<tool_call>{\"name\": \"check_calendar_availability\", \"arguments\": {\"target_date\": \"...\", \"start_time\": \"...\"}}</tool_call>`.",
-            "   - When the user asks to schedule, create, set up, or add a meeting or calendar event (e.g. 'Schedule a meeting called Client Demo tomorrow from 1 PM to 2 PM', 'Add a calendar event tomorrow at 3 PM'):",
-            "     * You MUST ALWAYS invoke `<tool_call>{\"name\": \"create_calendar_event\", \"arguments\": {\"title\": \"Client Demo\", \"start_time\": \"tomorrow at 1 PM\", \"end_time\": \"tomorrow at 2 PM\"}}</tool_call>` as your immediate response.",
+            "   - When the user asks to schedule, create, set up, or add a meeting, event, or task onto their calendar (e.g. 'Schedule task today at 8 am tark ai test for 30 mins in calendar', 'Schedule a meeting called Client Demo tomorrow from 1 PM to 2 PM', 'Add a calendar event tomorrow at 3 PM', 'put on my calendar'):",
+            "     * You MUST ALWAYS invoke `<tool_call>{\"name\": \"create_calendar_event\", \"arguments\": {\"title\": \"tark ai test\", \"start_time\": \"today at 8:00 AM\", \"end_time\": \"today at 8:30 AM\"}}</tool_call>` as your immediate response.",
             "     * HARD CONSTRAINT: You are STRICTLY FORBIDDEN from outputting confirmation text (such as 'The meeting has been scheduled on your Google Calendar...') without first executing `<tool_call>{\"name\": \"create_calendar_event\", ...}</tool_call>`. Only after receiving the successful tool response can you formulate your final confirmation message.",
-            "   - When the user asks to remove, delete, or cancel an event (e.g. 'remove test event', 'delete Client Demo meeting'):",
+            "   - When the user asks to remove, delete, or cancel an event (e.g. 'remove test event', 'delete Client Demo meeting', 'cancel meeting'):",
             "     * You MUST ALWAYS invoke `<tool_call>{\"name\": \"delete_calendar_event\", \"arguments\": {\"title\": \"test event\"}}</tool_call>`.",
             "     * NEVER claim you don't have a tool to delete calendar events when Google Calendar is connected.",
             "   - If `get_calendar_events` returns 0 events (`\"event_count\": 0` or `\"events\": []`), you MUST state clearly: 'You have no events scheduled for [period].' Do NOT provide example or placeholder meetings.",
@@ -922,7 +922,7 @@ def detect_web_search_intent(
                 cleaned_query = contextualize_search_query(q, messages)
                 return True, cleaned_query or q
 
-    # 3. Guardrails: Exclude queries clearly meant for internal tools, GitHub operations, coding, math, or greetings
+    # 3. Guardrails: Exclude queries clearly meant for internal tools, GitHub operations, coding, math, calendar, tasks, reminders, or memory
     lower = stripped.lower()
     if is_conversational_query(stripped):
         return False, ""
@@ -933,9 +933,22 @@ def detect_web_search_intent(
         "def ", "class ", "how to code", "solve ", "calculate ", "plot ", "implement "
     ]):
         return False, ""
+
+    # Comprehensive calendar, task, reminder, schedule, and personal intent guardrail
+    is_personal_action = bool(_re.search(
+        r"\b(?:task|tasks|calendar|calender|reminder|remind|reminders|meeting|meetings|event|events|agenda|todo|to-do|schedule|appointment|freebusy|availability|who\s+am\s+i|remember\s+this|my\s+name|my\s+pref)\b",
+        lower,
+    )) and bool(_re.search(
+        r"\b(?:schedule|create|add|set|put|book|cancel|delete|remove|show|list|get|check|complete|mark|plan|what\s+do\s+i\s+have|my\s+schedule|my\s+calendar|my\s+calender|my\s+tasks|today|tomorrow|at\s+\d+|for\s+\d+\s*min|remind\s+me)\b",
+        lower,
+    ))
+    if is_personal_action:
+        return False, ""
+
     if any(p in lower for p in [
-        "my schedule", "my calendar", "add task", "create task", "my tasks",
-        "what did i eat", "remind me", "check calendar"
+        "my schedule", "my calendar", "my calender", "add task", "create task", "my tasks",
+        "what did i eat", "remind me", "check calendar", "check calender", "schedule task",
+        "schedule meeting", "schedule event", "list tasks", "show tasks", "delete task"
     ]):
         return False, ""
 
