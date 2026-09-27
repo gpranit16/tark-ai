@@ -23,32 +23,36 @@ from app.services.research.models import Citation, Evidence, EvidenceSource, Ver
 
 logger = logging.getLogger(__name__)
 
-_SYNTHESIZER_SYSTEM = """You are a rigorous research analyst synthesizing verified evidence into an objective, factual, and strictly grounded report.
+_SYNTHESIZER_SYSTEM = """You are a senior lead research scientist. You are writing a comprehensive, authoritative, deeply informative, and evidence-grounded final research report for the user.
 
-CRITICAL GROUNDING AND ACCURACY RULES:
-1. STRICT GROUNDING: Every factual claim (pricing, features, architecture, autonomy levels, context windows, model names) MUST be directly supported by a cited source [N] from the provided evidence.
-2. REJECT UNSUPPORTED CLAIMS & PROHIBITED INFERENCES: NEVER infer or assume corporate acquisitions, parent organizations, pricing tiers, system architectures, or security incidents from unrelated or ambiguous snippets.
-3. EXPLICIT "NOT VERIFIED" REQUIREMENT: If the retrieved evidence does not contain verified data for any specific aspect asked in the query (e.g., pricing, context limit, or architecture), you MUST explicitly state: "[Aspect]: Not verified". Do NOT speculate or guess.
-4. OFFICIAL SOURCE PREFERENCE: Prefer official/primary sources (marked [Official]) for product capabilities, pricing, and availability.
-5. CITATIONS: Use [N] notation where N matches the source number provided. Every bullet point in Key Findings and Detailed Analysis MUST include at least one valid [N] citation.
-6. CLEAR LIMITATIONS: In ## Limitations & Caveats, explicitly list what was not verified or where sources conflict.
+CRITICAL DIRECTIVES:
+1. OUTPUT ONLY THE ACTUAL FINAL REPORT: Start writing the report directly. NEVER output planning thoughts, self-dialogue, checklist repetitions, or meta-commentary (e.g. NEVER write "Here is my thinking process", "Let's extract verified facts", "I need to ensure...", "From [1]...", etc.).
+2. STRICT GROUNDING: Every factual claim (pricing, features, architecture, benchmarks) must cite its source using `[N]` notation matching the provided evidence numbers.
+3. COMPARISON TABLES: Provide clean markdown comparison tables for model architectures, training parameters, and benchmark scores.
+4. UNVERIFIED GAPS: If an aspect was not found in the evidence, clearly document it under `## Limitations & Caveats`.
 
-Structure your response strictly as:
-
+REQUIRED REPORT STRUCTURE:
 ## Executive Summary
-[2–3 sentence factual overview of verified findings]
+Provide a cohesive, authoritative 2-3 sentence executive summary of the verified findings.
 
 ## Key Findings
-[Bullet points of verified facts, each cited with [N]; for unverified aspects state "Not verified"]
+- Bullet points of verified key facts, each cited with [N].
 
 ## Detailed Analysis
-[Detailed structured comparison/analysis with citations [N]]
+### 1. Architecture and Structural Design
+Detailed technical paragraphs and comparison tables with inline citations [N].
+
+### 2. Training Pipeline and Methodologies
+Detailed technical breakdown of reinforcement learning algorithms, reward mechanisms, and optimization with citations [N].
+
+### 3. Benchmark Performance and Capabilities
+Comprehensive analysis of reasoning benchmark scores (AIME, MMLU, GPQA, Code) with citations [N].
 
 ## Limitations & Caveats
-[List all unverified aspects, missing data points, or source conflicts]
+Objective list of unverified details, conflicting numbers across sources, or missing data points.
 
 ## Sources
-[List all cited sources formatted as: - [N] Title (Domain) - URL]
+- [N] Title (Domain) - URL
 
 Current date: {current_date}
 """
@@ -367,12 +371,14 @@ class ResearchSynthesizer:
         if not clean_output and raw_text.strip():
             clean_output = raw_text.replace("<think>", "").replace("</think>", "").strip()
 
-        # Strip untagged thinking process scratchpads before the actual report headers
-        if "## Executive Summary" in clean_output:
-            _, _, after_header = clean_output.partition("## Executive Summary")
-            clean_output = "## Executive Summary" + after_header
-        elif re.search(r"^\s*(?:Here'?s a thinking process:?|Thinking Process:?|Thought Process:?)\b", clean_output, re.IGNORECASE):
-            clean_output = re.sub(r"^\s*(?:Here'?s a thinking process:?|Thinking Process:?|Thought Process:?)[\s\S]*?(?=(?:^##|\n##|\Z))", "", clean_output, flags=re.IGNORECASE).strip()
+        # Strip echoed prompt guidelines like "## Executive Summary:** 2-3 sentence..." or "## Key Findings:** Bullet points..."
+        clean_output = re.sub(r"##\s*Executive Summary:?\s*\*\*[\s\S]*?(?=\n##\s*[A-Za-z]|\Z)", "", clean_output, flags=re.IGNORECASE).strip()
+        clean_output = re.sub(r"^\s*(?:Here'?s a thinking process:?|Thinking Process:?|Thought Process:?|Let'?s extract verified facts)[\s\S]*?(?=(?:^##|\n##|\Z))", "", clean_output, flags=re.IGNORECASE).strip()
+
+        # If there's an Executive Summary header, start from the clean header
+        es_match = re.search(r"##\s*Executive Summary\b(?!\s*:\*\*)", clean_output, re.IGNORECASE)
+        if es_match:
+            clean_output = clean_output[es_match.start():]
 
         return clean_output, finish_reason
 
