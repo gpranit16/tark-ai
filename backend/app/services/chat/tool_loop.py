@@ -504,8 +504,11 @@ def strip_think_markup(text: str, strip_whitespace: bool = False) -> str:
 
 
 def strip_tool_call_markup(text: str, strip_whitespace: bool = False) -> str:
-    """Remove all tool call markup, XML tags, bare tool JSONs, and thinking tags so only clean response remains."""
-    cleaned = re.sub(r"(?:Tool call:\s*)?`*<tool_call>[\s\S]*?</tool_call>`*", "", text, flags=re.IGNORECASE)
+    """Remove all tool call markup, XML tags, pseudo-JSON memory updates, bare tool JSONs, and thinking tags."""
+    # Strip pseudo-JSON memory/action updates like `json { "update": true, ... } ` or ```json { "update": ... } ```
+    cleaned = re.sub(r"`*json\s*\{[\s\S]*?\}\s*`*", "", text, flags=re.IGNORECASE)
+    cleaned = re.sub(r"```(?:json)?\s*\{[\s\S]*?\}\s*```", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"(?:Tool call:\s*)?`*<tool_call>[\s\S]*?</tool_call>`*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"(?:Tool call:\s*)?`*<tool_call>[\s\S]*?(?:</tool_call>|(?=<tool_call>)|\Z)`*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"(?:Tool call:\s*)?`*<function_call>[\s\S]*?</function_call>`*", "", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"(?:Tool call:\s*)?`*<function_call>[\s\S]*?(?:</function_call>|(?=<function_call>)|\Z)`*", "", cleaned, flags=re.IGNORECASE)
@@ -513,7 +516,7 @@ def strip_tool_call_markup(text: str, strip_whitespace: bool = False) -> str:
     cleaned = JSON_CODEBLOCK_TOOL_REGEX.sub("", cleaned)
     cleaned = strip_think_markup(cleaned, strip_whitespace=strip_whitespace)
 
-    # Strip any bare tool call JSON blocks with balanced braces
+    # Strip any bare tool call / pseudo JSON blocks with balanced braces
     start_indices = [i for i, ch in enumerate(cleaned) if ch == "{"]
     for start in reversed(start_indices):
         if start >= len(cleaned) or cleaned[start] != "{":
@@ -541,7 +544,14 @@ def strip_tool_call_markup(text: str, strip_whitespace: bool = False) -> str:
                         candidate = cleaned[start : end + 1]
                         try:
                             parsed = json.loads(candidate)
-                            if isinstance(parsed, dict) and (parsed.get("name") or parsed.get("tool") or parsed.get("function")):
+                            if isinstance(parsed, dict) and (
+                                parsed.get("name")
+                                or parsed.get("tool")
+                                or parsed.get("function")
+                                or parsed.get("update") is True
+                                or parsed.get("attribute")
+                                or parsed.get("action")
+                            ):
                                 cleaned = cleaned[:start] + cleaned[end + 1 :]
                         except Exception:
                             pass
@@ -1251,11 +1261,16 @@ class ToolCallOrchestrator:
             "Tool Call:",
             "`<tool_call",
             "```json",
+            "`json",
+            "`json {",
             '{"name"',
             '{"tool"',
             '{"function"',
             '{"arguments"',
             '{"parameters"',
+            '{"update"',
+            '{"attribute"',
+            '{"memory"',
             *_dynamic_tool_names,
         )
 
@@ -1319,6 +1334,12 @@ class ToolCallOrchestrator:
                                 )
                                 if has_partial_think and len(stream_buffer) <= len("<think>"):
                                     break
+
+                                # 2b. Check for and strip pseudo-JSON memory update blocks
+                                pseudo_json = re.search(r"`*json\s*\{[\s\S]*?\}\s*`*|```(?:json)?\s*\{[\s\S]*?\}\s*```", stream_buffer, re.IGNORECASE)
+                                if pseudo_json:
+                                    stream_buffer = stream_buffer[:pseudo_json.start()] + stream_buffer[pseudo_json.end():]
+                                    continue
 
                                 # 3. Check for tool call markers anywhere in stream_buffer
                                 tool_call_pattern = re.search(

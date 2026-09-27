@@ -347,6 +347,14 @@ class MemoryExtractor:
             0.85,
             0.75,
         ),
+        (
+            r"\bi\s+(?:really\s+)?(?:love|like)\s+([^.!?\n]+)",
+            MemoryCategory.INTEREST,
+            "user_interest",
+            "Likes / Loves {0}",
+            0.85,
+            0.75,
+        ),
     ]
 
     def contains_secrets(self, text: str) -> bool:
