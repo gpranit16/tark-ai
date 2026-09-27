@@ -74,9 +74,10 @@ def get_allowed_origins() -> list[str]:
             if cleaned and cleaned not in origins:
                 origins.append(cleaned)
     if settings.frontend_url:
-        fe = settings.frontend_url.strip().rstrip("/")
-        if fe and fe not in origins:
-            origins.append(fe)
+        for u in settings.frontend_url.split(","):
+            fe = u.strip().rstrip("/")
+            if fe and fe not in origins:
+                origins.append(fe)
     if settings.app_env in ("development", "test"):
         for local_url in ("http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000"):
             if local_url not in origins:

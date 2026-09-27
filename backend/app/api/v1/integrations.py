@@ -55,7 +55,7 @@ async def google_calendar_callback(
 ):
     """Google OAuth callback handler. Exchanges code for tokens and redirects to frontend."""
     settings = get_settings()
-    frontend_base = settings.frontend_url.rstrip("/") if settings.frontend_url else "http://localhost:5173"
+    frontend_base = settings.primary_frontend_url
     redirect_target = f"{frontend_base}/settings?tab=connections"
 
     if error or not code or not state:

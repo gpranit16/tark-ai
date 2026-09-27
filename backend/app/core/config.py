@@ -69,6 +69,15 @@ class Settings(BaseSettings):
     resend_from_email: str = Field(default="onboarding@resend.dev", alias="RESEND_FROM_EMAIL")
     resend_from_name: str = Field(default="TARK AI", alias="RESEND_FROM_NAME")
     frontend_url: str = Field(default="http://localhost:5173", alias="FRONTEND_URL")
+
+    @property
+    def primary_frontend_url(self) -> str:
+        """Returns the primary single frontend URL for redirects even if comma-separated."""
+        if not self.frontend_url:
+            return "http://localhost:5173"
+        first = self.frontend_url.split(",")[0].strip()
+        return first.rstrip("/") or "http://localhost:5173"
+
     password_reset_token_expire_minutes: int = Field(default=60, alias="PASSWORD_RESET_TOKEN_EXPIRE_MINUTES")
     email_verification_token_expire_hours: int = Field(default=24, alias="EMAIL_VERIFICATION_TOKEN_EXPIRE_HOURS")
 
