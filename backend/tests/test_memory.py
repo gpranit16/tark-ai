@@ -391,3 +391,30 @@ async def test_explicit_user_profile_save_and_query(db_session: AsyncSession, us
     )
     assert "Pranit Kumar" in dossier
     assert "BMS" in dossier or "CSE" in dossier
+
+
+@pytest.mark.asyncio
+async def test_automatic_natural_statements_extraction(db_session: AsyncSession, user: User) -> None:
+    """Verify natural casual statements automatically extract and save to memory without explicit commands."""
+    extractor = MemoryExtractor()
+    service = MemoryService(db_session)
+
+    # 1. Interest: "i love cat"
+    r1 = extractor.extract("i love cat")
+    assert len(r1.candidates) >= 1
+    assert r1.candidates[0].category == MemoryCategory.INTEREST
+    assert "cat" in r1.candidates[0].value.lower()
+
+    # 2. Location: "i live in Bangalore"
+    r2 = extractor.extract("i live in Bangalore")
+    assert len(r2.candidates) >= 1
+    assert r2.candidates[0].category == MemoryCategory.FACT
+    assert "Bangalore" in r2.candidates[0].value
+
+    # Store them
+    stored = await service.process_and_store_candidates(user.id, r1.candidates + r2.candidates)
+    assert len(stored) == 2
+
+    # Check that they appear in list_memories
+    mem_list = await service.list_memories(user.id)
+    assert mem_list.total >= 2
