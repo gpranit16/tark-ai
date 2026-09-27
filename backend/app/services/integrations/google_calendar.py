@@ -71,9 +71,9 @@ def normalize_to_rfc3339(dt_str: Any, default_tz_offset: str = "+05:30") -> str:
 class GoogleCalendarService:
     def __init__(self) -> None:
         self.settings = get_settings()
-        self.client_id = self.settings.google_client_id
-        self.client_secret = self.settings.google_client_secret
-        self.redirect_uri = self.settings.google_redirect_uri
+        self.client_id = (self.settings.google_client_id or "").strip().lstrip("=").strip()
+        self.client_secret = (self.settings.google_client_secret or "").strip().lstrip("=").strip()
+        self.redirect_uri = (self.settings.google_redirect_uri or "").strip().lstrip("=").strip()
 
     def get_authorization_url(self, user_id: UUID, allow_write: bool = True) -> str:
         """Generate Google OAuth 2.0 consent URL with CSRF state protection."""
