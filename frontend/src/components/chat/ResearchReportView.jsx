@@ -204,10 +204,27 @@ export default function ResearchReportView({
     return map;
   }, [citations, parsedMarkdownSources]);
 
-  // Strip duplicate raw markdown Sources list from report body so it renders cleanly via interactive components
+  // Extract images from markdown content if images prop is empty
+  const parsedMarkdownImages = useMemo(() => {
+    if (!content) return [];
+    const imageMatches = [...content.matchAll(/!\[(.*?)\]\((https?:\/\/[^\s\)]+)\)/g)];
+    return imageMatches.map(m => ({
+      caption: m[1] || 'Research Diagram',
+      url: m[2],
+      image_url: m[2]
+    }));
+  }, [content]);
+
+  const effectiveImages = useMemo(() => {
+    if (images && images.length > 0) return images;
+    return parsedMarkdownImages;
+  }, [images, parsedMarkdownImages]);
+
+  // Strip ONLY the raw markdown Sources block so it doesn't duplicate the verified cards,
+  // but KEEP all other sections (including ## Visual Diagrams & Architecture Schemas)
   const cleanedContent = useMemo(() => {
     if (!content) return '';
-    return content.replace(/(?:^|\n)##\s+Sources[\s\S]*$/i, '').trim();
+    return content.replace(/(?:^|\n)##\s+Sources\s*\n[\s\S]*?(?=\n##\s*[A-Za-z]|\Z)/i, '').trim();
   }, [content]);
 
   const handleCopy = async () => {
@@ -336,16 +353,16 @@ export default function ResearchReportView({
       </div>
 
       {/* Contextual Visuals / Architectural Diagrams Gallery */}
-      {images && images.length > 0 && (
+      {effectiveImages && effectiveImages.length > 0 && (
         <div className="p-4 sm:p-5 border-b border-white/[0.06] bg-[#0A0A0C]">
           <div className="flex items-center gap-2 mb-3">
             <ImageIcon className="w-4 h-4 text-[#D4AF37]" />
             <span className="text-xs font-semibold text-[#F4F2ED] uppercase tracking-wider">
-              Research Visuals & Architectural Diagrams
+              Research Visuals & Architectural Diagrams ({effectiveImages.length})
             </span>
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-            {images.map((img, i) => (
+            {effectiveImages.map((img, i) => (
               <div
                 key={i}
                 className="group relative rounded-xl overflow-hidden border border-white/[0.08] hover:border-[#D4AF37]/40 bg-[#121214] transition-all cursor-pointer shadow-sm"
