@@ -201,8 +201,18 @@ class ResearchManager:
         verified_ev = final_state.get("verified_evidence", final_state.get("evidence", []))
         evidence_count = len(citations) if citations else len(verified_ev)
         confidence = (final_state.get("verification_result") or {}).get("confidence", 0.0)
-        citation_coverage = final_state.get("citation_coverage", 1.0)
         generated_images = final_state.get("generated_images", [])
+
+        # Embed visual diagrams into markdown if generated
+        if generated_images:
+            images_md_blocks = []
+            for img in generated_images:
+                url = img.get("image_url") or img.get("url")
+                caption = img.get("caption") or img.get("purpose") or "Technical Research Diagram"
+                if url:
+                    images_md_blocks.append(f"\n\n![{caption}]({url})\n*Figure: {caption}*")
+            if images_md_blocks:
+                final_answer = final_answer + "\n\n## Visual Diagrams & Architecture Schemas" + "".join(images_md_blocks)
 
         if final_answer:
             chunk_size = 64

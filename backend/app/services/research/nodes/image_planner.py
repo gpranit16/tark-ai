@@ -61,7 +61,8 @@ _TECHNICAL_KEYWORDS = re.compile(
     r"transformer|attention|mixture|expert|moe|reinforcement|rl|grpo|ppo|sft|"
     r"deep[- ]?seek|openai|gpt|llm|ai|neural|inference|deployment|kubernetes|"
     r"docker|microservice|api|database|cloud|distributed|parallel|cluster|"
-    r"encoder|decoder|embedding|token|latent|diffusion|autoregressive|generation"
+    r"encoder|decoder|embedding|token|latent|diffusion|autoregressive|generation|"
+    r"semiconductor|chip|foundry|tsmc|intel|samsung|wafer|nanometer|node|fab|lithography|gpu|cpu|processor|asic"
     r")\b",
     re.IGNORECASE,
 )
@@ -91,6 +92,7 @@ def _deterministic_image_plan(query: str) -> Optional[ImagePlan]:
     is_system = bool(re.search(r"\b(architecture|system|pipeline|infrastructure|framework|stack|layer|topology)\b", q_lower))
     is_cloud = bool(re.search(r"\b(kubernetes|docker|k8s|aws|azure|gcp|cloud|microservice|cluster|pod|node)\b", q_lower))
     is_space = bool(re.search(r"\b(rocket|satellite|spacecraft|engine|propulsion|orbit|stage|separation|starship)\b", q_lower))
+    is_semiconductor = bool(re.search(r"\b(semiconductor|chip|foundry|tsmc|intel|samsung|2nm|18a|wafer|fab|lithography|gpu|cpu)\b", q_lower))
 
     images: list[ImageItem] = []
 
@@ -112,6 +114,17 @@ def _deterministic_image_plan(query: str) -> Optional[ImagePlan]:
                 placement="After ## Key Findings",
                 prompt=f"Benchmark performance radar/spider chart comparing models for: {q}. Dark mode, gold fill #D4AF37 for model A, teal fill for model B, labeled axes: AIME, MATH-500, MMLU, GPQA-Diamond, Coding. Clean vector, minimal grid lines, professional data visualization aesthetic",
             ))
+    elif is_semiconductor:
+        images.append(ImageItem(
+            purpose="Process node comparison and transistor microarchitecture schema",
+            placement="After ## Detailed Analysis",
+            prompt=f"Technical semiconductor transistor architecture cross-section diagram for: {q}. Gate-All-Around GAA RibbonFET vs MBCFET vs Nanosheet. Clean vector dark mode, graphite background #0D0D0F, gold accent lines #D4AF37, labeled source drain channels and backside power via, crisp technical schematic",
+        ))
+        images.append(ImageItem(
+            purpose="Global foundry market share and fab expansion comparison map",
+            placement="After ## Key Findings",
+            prompt=f"Semiconductor global foundry market share and fab geography visualization for: {q}. Clean modern dark mode data graphic, TSMC vs Samsung vs Intel breakdown, minimal elegant layout, high contrast gold #D4AF37 and neon blue accents",
+        ))
     elif is_system or is_cloud:
         images.append(ImageItem(
             purpose="System architecture topology diagram showing component relationships and data flow",
