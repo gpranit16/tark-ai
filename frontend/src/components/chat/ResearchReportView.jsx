@@ -126,24 +126,52 @@ export default function ResearchReportView({
     const lines = sourcesMatch[1].split('\n');
     const map = {};
     for (const line of lines) {
-      // Matches: - [1] [Title](url) or - [1] Title - url or [1] url
-      const m = line.match(/^\s*(?:-\s*)?\[(\d+)\]\s*(?:\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)|([^\-\n]+?)\s*-\s*(https?:\/\/[^\s\)]+)|(https?:\/\/[^\s\)]+))/i);
-      if (m) {
-        const num = parseInt(m[1], 10);
-        const title = (m[2] || m[4] || `Source [${num}]`).trim();
-        const url = (m[3] || m[5] || m[6] || '').trim();
-        if (url) {
-          map[num] = {
-            citation_id: `cit-${num}`,
-            title,
-            url,
-            domain: (() => {
-              try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return 'web'; }
-            })(),
-            source_type: 'web',
-          };
-        }
+      if (!line.trim()) continue;
+      // Match number [N]
+      const numMatch = line.match(/^\s*(?:-\s*)?\[(\d+)\]/);
+      if (!numMatch) continue;
+      const num = parseInt(numMatch[1], 10);
+
+      // Try matching markdown link: [Title](url)
+      const mdLinkMatch = line.match(/\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)/i);
+      // Try matching explicit URL: https://...
+      const rawUrlMatch = line.match(/(https?:\/\/[^\s\)]+)/i);
+      // Try matching domain pattern: (Domain: example.com) or domain.com
+      const domainMatch = line.match(/\(Domain:\s*([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})\)/i);
+
+      let url = '';
+      let title = '';
+      let domain = '';
+
+      if (mdLinkMatch) {
+        title = mdLinkMatch[1].trim();
+        url = mdLinkMatch[2].trim();
+      } else if (rawUrlMatch) {
+        url = rawUrlMatch[1].trim();
+        const afterNum = line.replace(/^\s*(?:-\s*)?\[\d+\]\s*/, '');
+        title = afterNum.replace(url, '').replace(/[\(\)\-\[\]]/g, ' ').trim() || `Source [${num}]`;
+      } else if (domainMatch) {
+        domain = domainMatch[1].trim();
+        url = `https://${domain}`;
+        const afterNum = line.replace(/^\s*(?:-\s*)?\[\d+\]\s*/, '');
+        title = afterNum.replace(/\(Domain:.*?\)/gi, '').replace(/\(web\)/gi, '').trim() || domain;
+      } else {
+        const afterNum = line.replace(/^\s*(?:-\s*)?\[\d+\]\s*/, '').trim();
+        title = afterNum || `Source [${num}]`;
+        url = `https://www.google.com/search?q=${encodeURIComponent(title)}`;
       }
+
+      if (!domain && url) {
+        try { domain = new URL(url).hostname.replace(/^www\./, ''); } catch { domain = 'web'; }
+      }
+
+      map[num] = {
+        citation_id: `cit-${num}`,
+        title: title || `Source [${num}]`,
+        url,
+        domain: domain || 'web',
+        source_type: 'web',
+      };
     }
     return map;
   }, [content]);
@@ -428,6 +456,31 @@ export default function ResearchReportView({
               <td className="px-3.5 py-2.5 text-[#D8D4CC] border-b border-white/[0.03] align-top">
                 {processChildren(children, citationMap, handleCitationClick)}
               </td>
+            ),
+            img: ({ src, alt }) => (
+              <div className="my-5 rounded-2xl overflow-hidden border border-white/[0.1] bg-[#121214] shadow-lg group">
+                <div 
+                  className="relative overflow-hidden bg-black/70 flex items-center justify-center cursor-pointer min-h-[220px]"
+                  onClick={() => setSelectedImage({ url: src, caption: alt })}
+                >
+                  <img
+                    src={src}
+                    alt={alt || "Research Diagram"}
+                    className="w-full h-auto max-h-[460px] object-contain transition-transform duration-300 group-hover:scale-[1.01]"
+                    loading="lazy"
+                  />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity flex items-end justify-between p-3.5">
+                    <span className="text-xs text-white font-medium flex items-center gap-1.5">
+                      <Maximize2 className="w-4 h-4 text-[#D4AF37]" /> Click to Expand Diagram
+                    </span>
+                  </div>
+                </div>
+                {alt && (
+                  <div className="p-3 bg-[#161619] border-t border-white/[0.06] text-xs text-[#A8A49A] flex items-center justify-between">
+                    <span>{alt}</span>
+                  </div>
+                )}
+              </div>
             ),
             a: ({ href, children }) => (
               <a

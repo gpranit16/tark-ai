@@ -446,14 +446,19 @@ class ResearchSynthesizer:
                 published_at=ev.published_at,
             ))
 
-        # Guarantee ## Sources section exists with full markdown clickable links [N] [Title](url)
-        if citations and "## Sources" not in cleaned_text:
+        # Guarantee ## Sources section exists and has real clickable markdown links [N] [Title](url)
+        if citations:
             sources_block = ["\n\n## Sources"]
             for idx, cit in enumerate(citations, 1):
-                url = cit.url or "#"
+                url = cit.url or (f"https://{cit.domain}" if cit.domain else "#")
                 title = cit.title or cit.domain or f"Source {idx}"
                 sources_block.append(f"- [{idx}] [{title}]({url})")
-            cleaned_text = cleaned_text + "\n" + "\n".join(sources_block)
+            sources_text = "\n".join(sources_block)
+            if "## Sources" in cleaned_text:
+                # Replace existing malformed/plain Sources block with verified clickable markdown links
+                cleaned_text = re.sub(r"##\s*Sources[\s\S]*?(?=\n##|\Z)", sources_text.strip(), cleaned_text, flags=re.IGNORECASE)
+            else:
+                cleaned_text = cleaned_text + sources_text
 
         return cleaned_text, citations
 
