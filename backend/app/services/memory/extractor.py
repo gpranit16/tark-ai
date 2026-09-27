@@ -22,6 +22,7 @@ class ExplicitMemoryCommand:
     raw_query: str
     target_subject: str | None = None
     extracted_candidate: MemoryCandidate | None = None
+    extracted_candidates: list[MemoryCandidate] | None = None
 
 
 class MemoryExtractor:
@@ -271,6 +272,38 @@ class MemoryExtractor:
             0.95,
         ),
         (
+            r"\b(?:i\s+am|i['’]?m)\s+([A-Z][a-zA-Z\s]+?)(?:\.|\,|\band\b|Institution|Program|College|University|Student|Year|$)",
+            MemoryCategory.FACT,
+            "name",
+            "Name is {0}",
+            0.95,
+            0.95,
+        ),
+        (
+            r"\b(?:institution|college|university|school|studying\s+at|student\s+at)\s*[:=]?\s*([^.!?\n,]+)",
+            MemoryCategory.FACT,
+            "user_institution",
+            "Institution / College: {0}",
+            0.95,
+            0.90,
+        ),
+        (
+            r"\b(?:program|branch|degree|major|department)\s*[:=]?\s*([^.!?\n,]+)",
+            MemoryCategory.FACT,
+            "user_program",
+            "Program / Degree: {0}",
+            0.95,
+            0.90,
+        ),
+        (
+            r"\b(?:year|current\s+year)\s*[:=]?\s*([^.!?\n,]+)",
+            MemoryCategory.FACT,
+            "user_year",
+            "Academic Year: {0}",
+            0.95,
+            0.85,
+        ),
+        (
             r"\bi\s+am\s+a\s+([^.!?\n]+(engineer|developer|architect|student|researcher|designer|manager|analyst))",
             MemoryCategory.FACT,
             "user_role",
@@ -332,7 +365,7 @@ class MemoryExtractor:
             return ExplicitMemoryCommand(intent=ExplicitIntent.FORGET_ALL, raw_query=clean)
 
         # 2. Query Memory
-        if re.search(r"^(what\s+do\s+you\s+(remember|know)\s+about\s+me\??|show\s+me\s+what\s+you\s+remember\??|what\s+are\s+my\s+preferences\??|what\s+is\s+my\s+name\??|what\s+do\s+you\s+know\s+about\s+my\s+project\??|list\s+my\s+memories\??)$", clean, re.IGNORECASE):
+        if re.search(r"^(who\s+am\s+i\??|what\s+do\s+you\s+(remember|know)\s+about\s+me\??|show\s+me\s+what\s+you\s+remember\??|what\s+are\s+my\s+preferences\??|what\s+is\s+my\s+name\??|what\s+do\s+you\s+know\s+about\s+my\s+project\??|list\s+my\s+memories\??|show\s+memory\??|my\s+memories\??|what\s+do\s+you\s+remember\??)$", clean, re.IGNORECASE):
             return ExplicitMemoryCommand(intent=ExplicitIntent.QUERY, raw_query=clean)
 
         # 3. Explicit Forget / Delete target memory
@@ -347,20 +380,20 @@ class MemoryExtractor:
             subject = groups[-1] if groups else None
             return ExplicitMemoryCommand(intent=ExplicitIntent.FORGET, raw_query=clean, target_subject=subject)
 
-        # 4. Explicit Remember / Save permanently
-        remember_match = re.search(
-            r"\b(remember\s+this|save\s+this\s+permanently|don['’]?t\s+forget\s+this|please\s+remember\s+this|save\s+to\s+memory|remember\s+that\s+([^.!?\n]+))\b",
-            clean,
-            re.IGNORECASE,
-        )
+        # 4. Explicit Remember / Save permanently / Save to long-term memory
+        remember_pattern = r"\b(?:remember\s+this|save\s+(?:this\s+)?(?:in|to|into)\s+(?:long[- ]?term\s+)?memory(?:\s+permanently)?|save\s+(?:this\s+)?permanently|save\s+to\s+memory|save\s+in\s+memory|don['’]?t\s+forget\s+this|please\s+remember\s+this|store\s+(?:this\s+)?(?:in|to)\s+(?:long[- ]?term\s+)?memory(?:\s+permanently)?|keep\s+(?:this\s+)?in\s+memory|remember\s+permanently|remember\s+that\s+([^.!?\n]+))\b"
+        remember_match = re.search(remember_pattern, clean, re.IGNORECASE)
         if remember_match:
             # Attempt to extract candidate from the same text
             # Strip the explicit remember phrase to parse the fact
-            text_without_cmd = re.sub(r"\b(remember\s+this|save\s+this\s+permanently|don['’]?t\s+forget\s+this|please\s+remember\s+this|save\s+to\s+memory|remember\s+that)\b[.,!?]?", "", clean, flags=re.IGNORECASE).strip()
+            strip_pattern = r"\b(?:remember\s+this|save\s+(?:this\s+)?(?:in|to|into)\s+(?:long[- ]?term\s+)?memory(?:\s+permanently)?|save\s+(?:this\s+)?permanently|save\s+to\s+memory|save\s+in\s+memory|don['’]?t\s+forget\s+this|please\s+remember\s+this|store\s+(?:this\s+)?(?:in|to)\s+(?:long[- ]?term\s+)?memory(?:\s+permanently)?|keep\s+(?:this\s+)?in\s+memory|remember\s+permanently|remember\s+that)\b[.,!?]?"
+            text_without_cmd = re.sub(strip_pattern, "", clean, flags=re.IGNORECASE).strip()
             candidate = None
+            candidates: list[MemoryCandidate] = []
             if text_without_cmd:
                 ext = self.extract(text_without_cmd)
                 if ext.candidates:
+                    candidates = ext.candidates
                     candidate = ext.candidates[0]
                 else:
                     # Fallback general remember candidate
@@ -372,12 +405,14 @@ class MemoryExtractor:
                         importance=0.9,
                         reasoning="Explicit user remember command",
                     )
+                    candidates = [candidate]
 
             return ExplicitMemoryCommand(
                 intent=ExplicitIntent.REMEMBER,
                 raw_query=clean,
                 target_subject=text_without_cmd or None,
                 extracted_candidate=candidate,
+                extracted_candidates=candidates,
             )
 
         return ExplicitMemoryCommand(intent=ExplicitIntent.NONE, raw_query=clean)
@@ -425,6 +460,7 @@ class MemoryExtractor:
         ]
 
         for group in all_pattern_groups:
+            allow_multiple_in_group = (group is self._FACT_PATTERNS)
             for pattern_tuple in group:
                 pattern, category, key, val_template, conf, imp = pattern_tuple
                 match = re.search(pattern, clean_text, re.IGNORECASE)
@@ -454,7 +490,8 @@ class MemoryExtractor:
                         # Avoid duplicate keys in candidate list
                         if not any(c.key == candidate.key for c in candidates):
                             candidates.append(candidate)
-                            break  # Highest-precedence match in this group taken
+                            if not allow_multiple_in_group:
+                                break
 
         if not candidates:
             return MemoryExtractionResult(skipped_reason="No qualifying memory patterns detected")

@@ -361,3 +361,33 @@ async def test_document_fact_not_becoming_user_memory(db_session: AsyncSession, 
 
     assert len(result.candidates) == 0
     assert "RAG document query" in (result.skipped_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_explicit_user_profile_save_and_query(db_session: AsyncSession, user: User) -> None:
+    """Verify user can explicitly save multi-fact profile to long-term memory and query it."""
+    extractor = MemoryExtractor()
+    query = "i am Pranit Kumar Institution: BMS Institute of Technology & Management (BMSIT) Program: CSE (Computer Science and Engineering) Year: 3rd Year save in long term memory permanently"
+    
+    cmd = extractor.detect_explicit_command(query)
+    assert cmd.intent.value == "remember"
+    assert cmd.extracted_candidates is not None
+    assert len(cmd.extracted_candidates) >= 3
+
+    service = MemoryService(db_session)
+    resp, evt_type, evt_payload = await service.handle_explicit_memory_command(
+        user_id=user.id,
+        command=cmd,
+    )
+    assert evt_type == "memory_saved"
+    assert "Pranit Kumar" in resp or "Institution" in resp
+
+    # Query memory via "who am i"
+    who_cmd = extractor.detect_explicit_command("who am i")
+    assert who_cmd.intent.value == "query"
+    dossier, _, _ = await service.handle_explicit_memory_command(
+        user_id=user.id,
+        command=who_cmd,
+    )
+    assert "Pranit Kumar" in dossier
+    assert "BMS" in dossier or "CSE" in dossier

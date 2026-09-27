@@ -330,8 +330,8 @@ class MemoryService:
                 return response, None, None
 
         if command.intent == ExplicitIntent.REMEMBER:
-            candidate = command.extracted_candidate
-            if not candidate and recent_messages:
+            candidates = command.extracted_candidates or ([command.extracted_candidate] if command.extracted_candidate else [])
+            if not candidates and recent_messages:
                 # Attempt extraction from immediate recent user message
                 from app.services.memory.extractor import MemoryExtractor
                 extractor = MemoryExtractor()
@@ -340,23 +340,26 @@ class MemoryService:
                     if content and content != command.raw_query:
                         ext = extractor.extract(content)
                         if ext.candidates:
-                            candidate = ext.candidates[0]
+                            candidates = ext.candidates
                             break
 
-            if candidate:
+            if candidates:
                 stored = await self.process_and_store_candidates(
                     user_id=user_id,
-                    candidates=[candidate],
+                    candidates=candidates,
                     project_id=project_id,
                     source=source,
                 )
                 if stored:
-                    item = stored[0]
-                    response = f"I've saved that to memory: **{item.value}**."
+                    if len(stored) == 1:
+                        response = f"I've saved that to memory: **{stored[0].value}**."
+                    else:
+                        items_str = "\n".join(f"- **{item.value}**" for item in stored)
+                        response = f"I've saved the following details to memory:\n{items_str}"
                     return response, "memory_saved", {
-                        "key": item.key,
-                        "value": item.value,
-                        "category": item.category.value,
+                        "key": stored[0].key,
+                        "value": stored[0].value,
+                        "category": stored[0].category.value,
                         "explicit": True,
                     }
 
