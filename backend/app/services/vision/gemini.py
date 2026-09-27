@@ -21,7 +21,7 @@ class GeminiVisionProvider(BaseVisionProvider):
             client = genai.Client(api_key=self.api_key)
             prompt_text = prompt or "Describe the contents of this image in detail."
             response = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-3.5-flash-lite",
                 contents=[
                     types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
                     prompt_text,

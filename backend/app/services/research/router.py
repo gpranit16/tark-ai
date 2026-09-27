@@ -91,65 +91,125 @@ def select_research_model(
     has_gemini = ProviderName.GEMINI in available_providers and bool(settings.gemini_api_key)
     has_groq = ProviderName.GROQ in available_providers and bool(settings.groq_api_key)
     has_nvidia = ProviderName.NVIDIA in available_providers and bool(settings.nvidia_api_key)
+    has_mistral = ProviderName.MISTRAL in available_providers and bool(settings.mistral_api_key)
 
-    # 1. Fast / lightweight tasks (Classification, Image Planning)
+    # 1. Fast / lightweight tasks (Classification, Image Planning) -> Groq / NVIDIA
     if task_type in (ResearchTaskType.CLASSIFICATION, ResearchTaskType.IMAGE_PLANNING):
-        fast_provider = getattr(settings, "fast_provider", "groq") or "groq"
-        if fast_provider == "nvidia" and has_nvidia:
-            return ModelDecision(
-                provider="nvidia",
-                model=settings.fast_model or "meta/llama-3.2-11b-vision-instruct",
-                reason="Fast low-latency structured output via NVIDIA",
-                fallback_provider="groq" if has_groq else ("gemini" if has_gemini else None),
-                fallback_model="qwen/qwen3.6-27b" if has_groq else (gemini_model if has_gemini else None),
-            )
-        elif has_groq:
+        if has_groq:
             return ModelDecision(
                 provider="groq",
                 model="qwen/qwen3.6-27b",
-                reason="Fast low-latency structured output via Groq Qwen",
-                fallback_provider="gemini" if has_gemini else "nvidia",
-                fallback_model=gemini_model if has_gemini else settings.nvidia_model,
+                reason="Ultra-fast structured output via Groq Qwen",
+                fallback_provider="nvidia" if has_nvidia else ("gemini" if has_gemini else None),
+                fallback_model=settings.nvidia_model if has_nvidia else (gemini_model if has_gemini else None),
+            )
+        elif has_nvidia:
+            return ModelDecision(
+                provider="nvidia",
+                model=settings.fast_model or "meta/llama-3.2-11b-vision-instruct",
+                reason="Fast structured output via NVIDIA",
+                fallback_provider="gemini" if has_gemini else None,
+                fallback_model=gemini_model if has_gemini else None,
             )
         elif has_gemini:
             return ModelDecision(
                 provider="gemini",
                 model=gemini_model,
-                reason="Gemini 3.5 Flash-Lite fast structured output",
-                fallback_provider="nvidia" if has_nvidia else None,
-                fallback_model=settings.nvidia_model if has_nvidia else None,
+                reason="Gemini fallback for structured classification",
             )
 
-    # 2. Query Generation (multi-angle search planning)
+    # 2. Query Generation (multi-angle search planning) -> Groq Qwen 3.8
     if task_type == ResearchTaskType.QUERY_GENERATION:
         if has_groq:
             return ModelDecision(
                 provider="groq",
                 model="qwen/qwen3.8-27b",
-                reason="Fast high-diversity query generation via Groq",
-                fallback_provider="gemini" if has_gemini else "nvidia",
-                fallback_model=gemini_model if has_gemini else settings.nvidia_model,
+                reason="Fast high-diversity query generation via Groq Qwen",
+                fallback_provider="nvidia" if has_nvidia else ("gemini" if has_gemini else None),
+                fallback_model=settings.nvidia_model if has_nvidia else (gemini_model if has_gemini else None),
+            )
+        elif has_nvidia:
+            return ModelDecision(
+                provider="nvidia",
+                model=settings.nvidia_model or "meta/llama-3.2-11b-vision-instruct",
+                reason="Query generation via NVIDIA",
+                fallback_provider="gemini" if has_gemini else None,
+                fallback_model=gemini_model if has_gemini else None,
             )
         elif has_gemini:
             return ModelDecision(
                 provider="gemini",
                 model=gemini_model,
-                reason="Gemini 3.5 Flash-Lite query generation",
+                reason="Gemini fallback for query generation",
             )
 
-    # 3. Heavy Workloads: Research Planning, Verification, Section Workers & Synthesis
-    # Specifically tested for Gemini 3.5 Flash-Lite
-    if task_type in (
-        ResearchTaskType.RESEARCH_PLANNING,
-        ResearchTaskType.EVIDENCE_VERIFICATION,
-        ResearchTaskType.SECTION_WORKER,
-        ResearchTaskType.SYNTHESIS,
-    ):
+    # 3. Section Workers (Parallel deep section drafting) -> NVIDIA Nemotron / Mistral / Groq
+    # Keeps Gemini tokens reserved for final synthesis while getting detailed parallel sub-topic drafts
+    if task_type == ResearchTaskType.SECTION_WORKER:
+        if has_nvidia:
+            return ModelDecision(
+                provider="nvidia",
+                model="nvidia/nemotron-3.5-lightning-30b-a3b",
+                reason="NVIDIA Nemotron for detailed analytical section drafting",
+                fallback_provider="groq" if has_groq else ("mistral" if has_mistral else ("gemini" if has_gemini else None)),
+                fallback_model="qwen/qwen3.8-27b" if has_groq else ("mistral-medium-latest" if has_mistral else (gemini_model if has_gemini else None)),
+            )
+        elif has_groq:
+            return ModelDecision(
+                provider="groq",
+                model="qwen/qwen3.8-27b",
+                reason="Groq Qwen 3.8 for parallel section investigation",
+                fallback_provider="mistral" if has_mistral else ("gemini" if has_gemini else None),
+                fallback_model="mistral-medium-latest" if has_mistral else (gemini_model if has_gemini else None),
+            )
+        elif has_mistral:
+            return ModelDecision(
+                provider="mistral",
+                model="mistral-medium-latest",
+                reason="Mistral for deep section investigation",
+                fallback_provider="gemini" if has_gemini else None,
+                fallback_model=gemini_model if has_gemini else None,
+            )
+        elif has_gemini:
+            return ModelDecision(
+                provider="gemini",
+                model=gemini_model,
+                reason="Gemini section drafting",
+            )
+
+    # 4. Evidence Verification -> NVIDIA / Groq (Fast fact cross-check)
+    if task_type == ResearchTaskType.EVIDENCE_VERIFICATION:
+        if has_nvidia:
+            return ModelDecision(
+                provider="nvidia",
+                model="nvidia/nemotron-3.5-lightning-30b-a3b",
+                reason="NVIDIA fact-checking & verification reasoning",
+                fallback_provider="groq" if has_groq else ("gemini" if has_gemini else None),
+                fallback_model="qwen/qwen3.8-27b" if has_groq else (gemini_model if has_gemini else None),
+            )
+        elif has_groq:
+            return ModelDecision(
+                provider="groq",
+                model="qwen/qwen3.8-27b",
+                reason="Groq fast evidence verification",
+                fallback_provider="gemini" if has_gemini else None,
+                fallback_model=gemini_model if has_gemini else None,
+            )
+        elif has_gemini:
+            return ModelDecision(
+                provider="gemini",
+                model=gemini_model,
+                reason="Gemini evidence verification",
+            )
+
+    # 5. Research Planning & Master Synthesis (Major Core Brain) -> Gemini 3.5 Flash-Lite
+    # Uses Gemini's large context, strict grounding, and narrative reasoning for the final report
+    if task_type in (ResearchTaskType.RESEARCH_PLANNING, ResearchTaskType.SYNTHESIS):
         if has_gemini:
             return ModelDecision(
                 provider="gemini",
                 model=gemini_model,
-                reason="Gemini 3.5 Flash-Lite tested for heavy research reasoning, planning, and synthesis",
+                reason="Gemini 3.5 Flash-Lite for master research planning and comprehensive final synthesis",
                 fallback_provider="nvidia" if has_nvidia else ("groq" if has_groq else None),
                 fallback_model="nvidia/nemotron-3.5-lightning-30b-a3b" if has_nvidia else ("qwen/qwen3.8-27b" if has_groq else None),
             )
@@ -157,16 +217,15 @@ def select_research_model(
             return ModelDecision(
                 provider="nvidia",
                 model="nvidia/nemotron-3.5-lightning-30b-a3b",
-                reason="NVIDIA reasoning model for deep research workload",
+                reason="NVIDIA Nemotron master synthesis fallback",
                 fallback_provider="groq" if has_groq else None,
                 fallback_model="qwen/qwen3.8-27b" if has_groq else None,
             )
         elif has_groq:
-            r_model = settings.reasoning_model or settings.normal_model or "qwen/qwen3.8-27b"
             return ModelDecision(
                 provider="groq",
-                model=r_model,
-                reason="Groq model for deep research workload",
+                model="qwen/qwen3.8-27b",
+                reason="Groq Qwen master synthesis fallback",
             )
 
     # Default fallback

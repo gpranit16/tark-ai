@@ -52,7 +52,7 @@ Comprehensive analysis of reasoning benchmark scores (AIME, MMLU, GPQA, Code) wi
 Objective list of unverified details, conflicting numbers across sources, or missing data points.
 
 ## Sources
-- [N] Title (Domain) - URL
+- [N] [Title](URL)
 
 Current date: {current_date}
 """

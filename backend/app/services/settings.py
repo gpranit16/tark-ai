@@ -206,7 +206,7 @@ class SettingsService:
                 provider="gemini",
                 display_name="Google Gemini",
                 status="available" if bool(self.settings.gemini_api_key) else "not_configured",
-                default_model="gemini-2.5-flash",
+                default_model="gemini-3.5-flash-lite",
             ),
             ProviderHealthInfo(
                 provider="mistral",
