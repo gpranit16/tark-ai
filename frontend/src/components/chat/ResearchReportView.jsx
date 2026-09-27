@@ -118,22 +118,65 @@ export default function ResearchReportView({
   const [selectedImage, setSelectedImage] = useState(null);
   const [highlightedSource, setHighlightedSource] = useState(null);
 
-  // Dynamic source count for header
-  const sourceCount = citations.length || metadata?.source_count || 13;
-
-  // Build 1-indexed citation lookup map
-  const citationMap = useMemo(() => {
+  // 1. Extract markdown sources if present in content
+  const parsedMarkdownSources = useMemo(() => {
+    if (!content) return {};
+    const sourcesMatch = content.match(/(?:^|\n)##\s+Sources\s*\n([\s\S]*?)(?=\n##|\Z)/i);
+    if (!sourcesMatch) return {};
+    const lines = sourcesMatch[1].split('\n');
     const map = {};
-    citations.forEach((c, i) => {
+    for (const line of lines) {
+      // Matches: - [1] [Title](url) or - [1] Title - url or [1] url
+      const m = line.match(/^\s*(?:-\s*)?\[(\d+)\]\s*(?:\[([^\]]+)\]\((https?:\/\/[^\s\)]+)\)|([^\-\n]+?)\s*-\s*(https?:\/\/[^\s\)]+)|(https?:\/\/[^\s\)]+))/i);
+      if (m) {
+        const num = parseInt(m[1], 10);
+        const title = (m[2] || m[4] || `Source [${num}]`).trim();
+        const url = (m[3] || m[5] || m[6] || '').trim();
+        if (url) {
+          map[num] = {
+            citation_id: `cit-${num}`,
+            title,
+            url,
+            domain: (() => {
+              try { return new URL(url).hostname.replace(/^www\./, ''); } catch { return 'web'; }
+            })(),
+            source_type: 'web',
+          };
+        }
+      }
+    }
+    return map;
+  }, [content]);
+
+  // Combined active citations list
+  const effectiveCitations = useMemo(() => {
+    if (citations && citations.length > 0) return citations;
+    const fromMarkdown = Object.values(parsedMarkdownSources);
+    return fromMarkdown;
+  }, [citations, parsedMarkdownSources]);
+
+  // Dynamic source count for header
+  const sourceCount = effectiveCitations.length || metadata?.source_count || 13;
+
+  // Build 1-indexed citation lookup map supporting all id formats
+  const citationMap = useMemo(() => {
+    const map = { ...parsedMarkdownSources };
+    (citations || []).forEach((c, i) => {
       map[i + 1] = c;
-      if (c.citation_id && !isNaN(parseInt(c.citation_id, 10))) {
-        map[parseInt(c.citation_id, 10)] = c;
+      if (c.citation_id) {
+        const digits = String(c.citation_id).replace(/\D/g, '');
+        if (digits) {
+          map[parseInt(digits, 10)] = c;
+        }
+      }
+      if (c.index) {
+        map[c.index] = c;
       }
     });
     return map;
-  }, [citations]);
+  }, [citations, parsedMarkdownSources]);
 
-  // Strip duplicate raw markdown Sources list from report body so it only renders via verified cards
+  // Strip duplicate raw markdown Sources list from report body so it renders cleanly via interactive components
   const cleanedContent = useMemo(() => {
     if (!content) return '';
     return content.replace(/(?:^|\n)##\s+Sources[\s\S]*$/i, '').trim();
@@ -166,8 +209,9 @@ export default function ResearchReportView({
   };
 
   const handleCitationClick = useCallback((cit, n) => {
-    if (cit?.url) {
-      window.open(cit.url, '_blank', 'noopener,noreferrer');
+    const targetCit = cit || citationMap[n];
+    if (targetCit?.url) {
+      window.open(targetCit.url, '_blank', 'noopener,noreferrer');
     }
     setSourcesOpen(true);
     setHighlightedSource(n);
@@ -178,7 +222,7 @@ export default function ResearchReportView({
       }
     }, 100);
     setTimeout(() => setHighlightedSource(null), 3000);
-  }, []);
+  }, [citationMap]);
 
   const getDomain = (url) => {
     try {
@@ -402,12 +446,12 @@ export default function ResearchReportView({
       </div>
 
       {/* Verified Sources Drawer — only shown when "Sources" button is toggled */}
-      {sourcesOpen && citations.length > 0 && (
+      {sourcesOpen && effectiveCitations.length > 0 && (
         <div className="border-t border-white/[0.06] bg-[#0E0E10] p-4 sm:p-5 transition-all">
           <div className="flex items-center justify-between mb-3">
             <span className="text-xs font-semibold text-[#A0A0A0] uppercase tracking-wider flex items-center gap-2">
               <Globe className="w-3.5 h-3.5 text-[#D4AF37]" />
-              Verified Evidence Sources ({citations.length})
+              Verified Evidence Sources ({effectiveCitations.length})
             </span>
             <span className="text-[11px] text-[#77736D]">
               Normalized & ground-truth verified
@@ -415,7 +459,7 @@ export default function ResearchReportView({
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 max-h-80 overflow-y-auto pr-1">
-            {citations.map((cit, idx) => {
+            {effectiveCitations.map((cit, idx) => {
               const num = idx + 1;
               const isHighlighted = highlightedSource === num;
               return (

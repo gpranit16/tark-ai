@@ -445,6 +445,16 @@ class ResearchSynthesizer:
                 page_number=ev.page_number,
                 published_at=ev.published_at,
             ))
+
+        # Guarantee ## Sources section exists with full markdown clickable links [N] [Title](url)
+        if citations and "## Sources" not in cleaned_text:
+            sources_block = ["\n\n## Sources"]
+            for idx, cit in enumerate(citations, 1):
+                url = cit.url or "#"
+                title = cit.title or cit.domain or f"Source {idx}"
+                sources_block.append(f"- [{idx}] [{title}]({url})")
+            cleaned_text = cleaned_text + "\n" + "\n".join(sources_block)
+
         return cleaned_text, citations
 
     def _build_citations(
